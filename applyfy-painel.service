@@ -1,0 +1,15 @@
+[Unit]
+Description=Applyfy Painel API
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/applyfy
+Environment="PATH=/var/www/applyfy/venv/bin"
+EnvironmentFile=/var/www/applyfy/.env
+ExecStart=/var/www/applyfy/venv/bin/gunicorn -w 1 -b 127.0.0.1:5000 --timeout 120 app:app
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
