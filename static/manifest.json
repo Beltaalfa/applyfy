@@ -1,0 +1,12 @@
+{
+  "name": "Applyfy Painel",
+  "short_name": "Applyfy",
+  "description": "Painel de saldos dos produtores Applyfy",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0b",
+  "theme_color": "#c9a227",
+  "orientation": "any",
+  "lang": "pt-BR",
+  "icons": []
+}

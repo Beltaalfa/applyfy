@@ -162,7 +162,7 @@ def main():
                 sys.exit(2)
 
             context.storage_state(path=config.SESSION_FILE)
-            print("OK! Sessão salva em", config.SESSION_FILE)
+            print("OK! Sessão salva em", config.SESSION_FILE, flush=True)
         finally:
             browser.close()
 

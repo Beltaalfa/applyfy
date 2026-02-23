@@ -2,8 +2,12 @@
 <html lang="pt-BR">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#c9a227">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Painel Saldos | Applyfy</title>
+  <link rel="manifest" href="/static/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&display=swap" rel="stylesheet">
@@ -31,7 +35,18 @@
     .wrap {
       max-width: 1400px;
       margin: 0 auto;
-      padding: 2rem 1.5rem;
+      padding: 1rem 1rem 2rem;
+      padding-left: max(1rem, env(safe-area-inset-left));
+      padding-right: max(1rem, env(safe-area-inset-right));
+      padding-bottom: max(2rem, env(safe-area-inset-bottom));
+    }
+    @media (max-width: 640px) {
+      .wrap { padding: 0.75rem; }
+      header { flex-direction: column; align-items: flex-start; gap: 0.75rem; }
+      h1 { font-size: 1.25rem; }
+      .actions { width: 100%; }
+      .btn { min-height: 44px; flex: 1 1 auto; justify-content: center; }
+      th, td { padding: 0.5rem 0.5rem; font-size: 0.75rem; }
     }
     header {
       display: flex;
@@ -110,7 +125,12 @@
       font-weight: 600;
       color: var(--text-muted);
       white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
     }
+    th:hover { color: var(--accent); }
+    th .sort-icon { opacity: 0.5; margin-left: 0.25rem; }
+    th.sorted .sort-icon { opacity: 1; color: var(--accent); }
     tr:hover td { background: rgba(255,255,255,0.02); }
     .num { text-align: right; font-variant-numeric: tabular-nums; }
     .empty {
@@ -129,6 +149,9 @@
         <p class="last-run" id="lastRun">Carregando…</p>
       </div>
       <div class="actions">
+        <a href="/historico" class="btn btn-secondary">Histórico por data</a>
+        <a href="/evolucao" class="btn btn-secondary">Evolução por produtor</a>
+        <a href="/log" class="btn btn-secondary">Log da exportação</a>
         <a href="/api/exportar?formato=xlsx" class="btn btn-primary" download>Exportar XLSX</a>
         <a href="/api/exportar?formato=csv" class="btn btn-secondary" download>Exportar CSV</a>
       </div>
@@ -138,15 +161,15 @@
         <table>
           <thead>
             <tr>
-              <th>Nome</th>
-              <th>Email</th>
-              <th class="num">Saldo pendente</th>
-              <th class="num">Saldo retido</th>
-              <th class="num">Saldo disponível</th>
-              <th class="num">Total sacado</th>
-              <th class="num">Vendas líquidas</th>
-              <th class="num">Indicação</th>
-              <th class="num">Outros</th>
+              <th data-col="Nome" data-type="text">Nome <span class="sort-icon">↕</span></th>
+              <th data-col="Email" data-type="text">Email <span class="sort-icon">↕</span></th>
+              <th data-col="Saldo pendente" data-type="num" class="num">Saldo pendente <span class="sort-icon">↕</span></th>
+              <th data-col="Saldo retido" data-type="num" class="num">Saldo retido <span class="sort-icon">↕</span></th>
+              <th data-col="Saldo disponível" data-type="num" class="num">Saldo disponível <span class="sort-icon">↕</span></th>
+              <th data-col="Total sacado" data-type="num" class="num">Total sacado <span class="sort-icon">↕</span></th>
+              <th data-col="Vendas líquidas" data-type="num" class="num">Vendas líquidas <span class="sort-icon">↕</span></th>
+              <th data-col="Indicação" data-type="num" class="num">Indicação <span class="sort-icon">↕</span></th>
+              <th data-col="Outros" data-type="num" class="num">Outros <span class="sort-icon">↕</span></th>
             </tr>
           </thead>
           <tbody id="tbody">
@@ -157,28 +180,66 @@
     </div>
   </div>
   <script>
+    var dadosAtuais = [];
+    var sortCol = null;
+    var sortAsc = true;
     function fmtMoney(v) {
       if (v == null || v === '' || isNaN(Number(v))) return '–';
       return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v));
     }
+    var cols = ['Nome','Email','Saldo pendente','Saldo retido','Saldo disponível','Total sacado','Vendas líquidas','Indicação','Outros'];
+    function rowToHtml(row) {
+      return '<tr>' + cols.map(function(c) {
+        var val = row[c];
+        var isNum = c !== 'Nome' && c !== 'Email';
+        return '<td class="' + (isNum ? 'num' : '') + '">' + (isNum ? fmtMoney(val) : (val || '–')) + '</td>';
+      }).join('') + '</tr>';
+    }
+    function renderTable(rows) {
+      var tbody = document.getElementById('tbody');
+      tbody.innerHTML = rows.length ? rows.map(rowToHtml).join('') : '<tr><td colspan="9" class="empty">Nenhum dado.</td></tr>';
+    }
     function render(data) {
-      const tbody = document.getElementById('tbody');
       const lastRun = document.getElementById('lastRun');
       if (!data.resultados || data.resultados.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="9" class="empty">Nenhum dado disponível. Execute o job diário ou aguarde a próxima atualização (2h).</td></tr>';
+        dadosAtuais = [];
+        renderTable([]);
         lastRun.textContent = data.run_at ? 'Última atualização: ' + new Date(data.run_at).toLocaleString('pt-BR') : 'Nenhuma exportação ainda.';
         return;
       }
+      dadosAtuais = data.resultados;
       lastRun.textContent = 'Última atualização: ' + (data.run_at ? new Date(data.run_at).toLocaleString('pt-BR') : '–') + ' · ' + data.total + ' produtores';
-      const cols = ['Nome','Email','Saldo pendente','Saldo retido','Saldo disponível','Total sacado','Vendas líquidas','Indicação','Outros'];
-      tbody.innerHTML = data.resultados.map(function(row) {
-        return '<tr>' + cols.map(function(c) {
-          const val = row[c];
-          const isNum = c !== 'Nome' && c !== 'Email';
-          return '<td class="' + (isNum ? 'num' : '') + '">' + (isNum ? fmtMoney(val) : (val || '–')) + '</td>';
-        }).join('') + '</tr>';
-      }).join('');
+      sortCol = null;
+      sortAsc = true;
+      document.querySelectorAll('th').forEach(function(th){ th.classList.remove('sorted'); });
+      renderTable(dadosAtuais);
     }
+    function sortData(col, type) {
+      if (sortCol === col) sortAsc = !sortAsc;
+      else { sortCol = col; sortAsc = true; }
+      var mult = sortAsc ? 1 : -1;
+      var sorted = dadosAtuais.slice().sort(function(a, b) {
+        var va = a[col], vb = b[col];
+        if (type === 'num') {
+          va = Number(va) || 0;
+          vb = Number(vb) || 0;
+          return mult * (va - vb);
+        }
+        va = (va || '').toString().toLowerCase();
+        vb = (vb || '').toString().toLowerCase();
+        return mult * va.localeCompare(vb);
+      });
+      document.querySelectorAll('th').forEach(function(th){
+        th.classList.toggle('sorted', th.getAttribute('data-col') === col);
+        var icon = th.querySelector('.sort-icon');
+        if (icon) icon.textContent = th.getAttribute('data-col') === col ? (sortAsc ? '↑' : '↓') : '↕';
+      });
+      renderTable(sorted);
+    }
+    document.querySelector('thead').addEventListener('click', function(e) {
+      var th = e.target.closest('th[data-col]');
+      if (th) sortData(th.getAttribute('data-col'), th.getAttribute('data-type') || 'text');
+    });
     fetch('/api/ultimo-relatorio')
       .then(function(r) { return r.json(); })
       .then(render)
@@ -186,6 +247,7 @@
         document.getElementById('tbody').innerHTML = '<tr><td colspan="9" class="empty">Erro ao carregar dados.</td></tr>';
         document.getElementById('lastRun').textContent = 'Erro ao carregar.';
       });
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
   </script>
 </body>
 </html>

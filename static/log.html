@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#c9a227">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Log da exportação | Applyfy</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg: #0a0a0b; --bg-card: #121214; --border: #1e1e22; --text: #e4e4e7; --text-muted: #71717a; --accent: #c9a227; --radius: 8px; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'DM Sans', monospace; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 0.875rem; }
+    .wrap { max-width: 1000px; margin: 0 auto; padding: 1rem; padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); padding-bottom: max(2rem, env(safe-area-inset-bottom)); }
+    @media (max-width: 640px) { .wrap { padding: 0.75rem; } .log-box { max-height: 60vh; font-size: 0.8rem; } }
+    h1 { font-size: 1.25rem; margin: 0 0 1rem 0; }
+    .nav { margin-bottom: 1rem; }
+    .nav a { color: var(--accent); text-decoration: none; margin-right: 1rem; padding: 0.5rem 0; min-height: 44px; display: inline-flex; align-items: center; }
+    .nav a:hover { text-decoration: underline; }
+    .toolbar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .toolbar label { color: var(--text-muted); display: flex; align-items: center; gap: 0.5rem; }
+    .toolbar input[type="checkbox"] { accent-color: var(--accent); }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .log-box { padding: 1rem; max-height: 70vh; overflow-y: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; line-height: 1.5; }
+    .log-box:empty::before { content: 'Carregando…'; color: var(--text-muted); }
+    .status { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav"><a href="/">← Painel</a> <a href="/historico">Histórico</a> <a href="/evolucao">Evolução</a></nav>
+    <h1>Log da exportação</h1>
+    <div class="toolbar">
+      <label><input type="checkbox" id="autoRefresh" checked> Atualizar a cada 3 s</label>
+    </div>
+    <div class="card">
+      <div class="log-box" id="logBox"></div>
+    </div>
+    <p class="status" id="status"></p>
+  </div>
+  <script>
+    var autoRefreshId = null;
+    function loadLog() {
+      fetch('/api/log?lines=500')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          var box = document.getElementById('logBox');
+          box.textContent = data.log || '(vazio)';
+          box.scrollTop = box.scrollHeight;
+          document.getElementById('status').textContent = 'Última atualização: ' + new Date().toLocaleTimeString('pt-BR');
+        })
+        .catch(function() {
+          document.getElementById('logBox').textContent = 'Erro ao carregar o log.';
+          document.getElementById('status').textContent = '';
+        });
+    }
+    document.getElementById('autoRefresh').addEventListener('change', function() {
+      if (this.checked) {
+        loadLog();
+        autoRefreshId = setInterval(loadLog, 3000);
+      } else {
+        if (autoRefreshId) clearInterval(autoRefreshId);
+      }
+    });
+    loadLog();
+    autoRefreshId = setInterval(loadLog, 3000);
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
+  </script>
+</body>
+</html>

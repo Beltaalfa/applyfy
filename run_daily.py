@@ -7,15 +7,17 @@ import os
 import subprocess
 import sys
 
+BASE = os.path.dirname(os.path.abspath(__file__))
 from dotenv import load_dotenv
-load_dotenv()
+
+# .env do projeto sempre prevalece (evita DATABASE_URL do shell, ex. tactical)
+load_dotenv(os.path.join(BASE, ".env"), override=True)
 
 import config
 from export_saldos import run_export
 import db
 
 config.ensure_data_dir()
-BASE = os.path.dirname(os.path.abspath(__file__))
 
 
 def main():
@@ -29,12 +31,13 @@ def main():
         print("Falha no login. Abortando run diário.")
         sys.exit(r.returncode)
 
-    # 2) Exportar saldos (usa sessão recém-salva)
-    resultados, log_rows = run_export(session_path=config.SESSION_FILE, save_to_disk=True)
+    print("Login OK. Iniciando exportação de saldos (pode levar 1–2 min até a primeira linha)...", flush=True)
+    # 2) Exportar saldos (usa sessão recém-salva; Postgres é alimentado a cada produtor)
+    resultados, log_rows, run_at = run_export(session_path=config.SESSION_FILE, save_to_disk=True)
 
-    # 3) Salvar no Postgres se DATABASE_URL estiver definido
+    # 3) Registrar run no Postgres (saldos_historico já foi preenchido durante o export)
     if resultados and db.DATABASE_URL:
-        db.save_export_run(resultados, log_rows)
+        db.save_export_run(resultados, log_rows, run_at=run_at)
 
     print("Run diário concluído. Registros:", len(resultados))
 

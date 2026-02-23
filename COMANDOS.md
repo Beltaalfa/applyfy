@@ -185,5 +185,9 @@ Siga as perguntas na tela. Depois o site passará a abrir em HTTPS.
 - **Rodar o job manualmente (login + exportação):**  
   `cd /var/www/applyfy && . env.sh && /var/www/applyfy/venv/bin/python run_daily.py`
 
+- **Rodar o job em background e acompanhar pelo painel de log:**  
+  `cd /var/www/applyfy && ./rodar_job.sh`  
+  *(O terminal só mostra “Job iniciado. Acompanhe em https://applyfy.northempresarial.com/log”; o restante sai em* `data/cron.log` *e na tela **Log** do painel.)*
+
 - **Testar só o login (com browser visível, para debug):**  
   `cd /var/www/applyfy && . env.sh && HEADLESS=0 /var/www/applyfy/venv/bin/python 01_salvar_sessao.py`

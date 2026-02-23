@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#c9a227">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Histórico por data | Applyfy</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg: #0a0a0b; --bg-card: #121214; --border: #1e1e22; --text: #e4e4e7; --text-muted: #71717a; --accent: #c9a227; --radius: 8px; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .wrap { max-width: 1400px; margin: 0 auto; padding: 1rem; padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); padding-bottom: max(2rem, env(safe-area-inset-bottom)); }
+    @media (max-width: 640px) { .wrap { padding: 0.75rem; } h1 { font-size: 1.25rem; } .filtro select { min-width: 100%; min-height: 44px; } th, td { padding: 0.5rem; font-size: 0.75rem; } }
+    h1 { font-size: 1.5rem; margin: 0 0 1rem 0; }
+    .nav { margin-bottom: 1.5rem; }
+    .nav a { color: var(--accent); text-decoration: none; margin-right: 1rem; padding: 0.5rem 0; min-height: 44px; display: inline-flex; align-items: center; }
+    .nav a:hover { text-decoration: underline; }
+    .filtro { margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+    .filtro label { color: var(--text-muted); }
+    .filtro select { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 1rem; min-width: 220px; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
+    th { font-weight: 600; color: var(--text-muted); white-space: nowrap; cursor: pointer; user-select: none; }
+    th:hover { color: var(--accent); }
+    th .sort-icon { opacity: 0.5; margin-left: 0.25rem; }
+    th.sorted .sort-icon { opacity: 1; color: var(--accent); }
+    th.num { text-align: right; }
+    .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .empty { padding: 3rem; text-align: center; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav"><a href="/">← Painel</a> <a href="/evolucao">Evolução por produtor</a></nav>
+    <h1>Histórico de saldos por data</h1>
+    <div class="filtro">
+      <label for="data">Data do relatório:</label>
+      <select id="data">
+        <option value="">Carregando…</option>
+      </select>
+    </div>
+    <p class="empty" id="msgHistorico" style="margin-bottom:1rem;"></p>
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-col="Nome" data-type="text">Nome <span class="sort-icon">↕</span></th>
+              <th data-col="Email" data-type="text">Email <span class="sort-icon">↕</span></th>
+              <th data-col="Saldo pendente" data-type="num" class="num">Saldo pendente <span class="sort-icon">↕</span></th>
+              <th data-col="Saldo retido" data-type="num" class="num">Saldo retido <span class="sort-icon">↕</span></th>
+              <th data-col="Saldo disponível" data-type="num" class="num">Saldo disponível <span class="sort-icon">↕</span></th>
+              <th data-col="Total sacado" data-type="num" class="num">Total sacado <span class="sort-icon">↕</span></th>
+              <th data-col="Vendas líquidas" data-type="num" class="num">Vendas líquidas <span class="sort-icon">↕</span></th>
+              <th data-col="Indicação" data-type="num" class="num">Indicação <span class="sort-icon">↕</span></th>
+              <th data-col="Outros" data-type="num" class="num">Outros <span class="sort-icon">↕</span></th>
+            </tr>
+          </thead>
+          <tbody id="tbody"><tr><td colspan="9" class="empty">Selecione uma data.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script>
+    var cols = ['Nome','Email','Saldo pendente','Saldo retido','Saldo disponível','Total sacado','Vendas líquidas','Indicação','Outros'];
+    var dadosAtuais = [];
+    var sortCol = null, sortAsc = true;
+    function fmtMoney(v) {
+      if (v == null || v === '' || isNaN(Number(v))) return '–';
+      return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v));
+    }
+    function rowToHtml(row) {
+      return '<tr>' + cols.map(function(c) {
+        var val = row[c];
+        var isNum = c !== 'Nome' && c !== 'Email';
+        return '<td class="' + (isNum ? 'num' : '') + '">' + (isNum ? fmtMoney(val) : (val || '–')) + '</td>';
+      }).join('') + '</tr>';
+    }
+    function renderTable(rows) {
+      var tbody = document.getElementById('tbody');
+      tbody.innerHTML = rows.length ? rows.map(rowToHtml).join('') : '<tr><td colspan="9" class="empty">Nenhum dado para esta data.</td></tr>';
+    }
+    function sortData(col, type) {
+      if (sortCol === col) sortAsc = !sortAsc; else { sortCol = col; sortAsc = true; }
+      var mult = sortAsc ? 1 : -1;
+      var sorted = dadosAtuais.slice().sort(function(a, b) {
+        var va = a[col], vb = b[col];
+        if (type === 'num') { va = Number(va) || 0; vb = Number(vb) || 0; return mult * (va - vb); }
+        va = (va || '').toString().toLowerCase();
+        vb = (vb || '').toString().toLowerCase();
+        return mult * va.localeCompare(vb);
+      });
+      document.querySelectorAll('th').forEach(function(th){
+        th.classList.toggle('sorted', th.getAttribute('data-col') === col);
+        var icon = th.querySelector('.sort-icon');
+        if (icon) icon.textContent = th.getAttribute('data-col') === col ? (sortAsc ? '↑' : '↓') : '↕';
+      });
+      renderTable(sorted);
+    }
+    document.querySelector('thead').addEventListener('click', function(e) {
+      var th = e.target.closest('th[data-col]');
+      if (th) sortData(th.getAttribute('data-col'), th.getAttribute('data-type') || 'text');
+    });
+    fetch('/api/datas').then(function(r){ return r.json(); }).then(function(datas) {
+      var sel = document.getElementById('data');
+      var msg = document.getElementById('msgHistorico');
+      if (!datas || datas.length === 0) {
+        sel.innerHTML = '<option value="">Nenhuma data</option>';
+        if (msg) msg.textContent = 'O histórico vem do Postgres (DATABASE_URL no .env). Confira o .env e execute o job pelo menos uma vez. Se o job já rodou com sucesso, reinicie o painel: sudo systemctl restart applyfy-painel';
+      } else {
+        if (msg) msg.textContent = '';
+        sel.innerHTML = '<option value="">Selecione uma data</option>' + (datas.map(function(d) {
+          return '<option value="' + d.run_at + '">' + d.label + '</option>';
+        }).join(''));
+      }
+      sel.addEventListener('change', function() {
+        var runAt = sel.value;
+        if (!runAt) { dadosAtuais = []; renderTable([]); return; }
+        fetch('/api/relatorio?run_at=' + encodeURIComponent(runAt))
+          .then(function(r){ return r.json(); })
+          .then(function(data) {
+            dadosAtuais = data.resultados || [];
+            sortCol = null; sortAsc = true;
+            renderTable(dadosAtuais);
+          })
+          .catch(function() { renderTable([]); });
+      });
+    }).catch(function() { document.getElementById('data').innerHTML = '<option value="">Erro ao carregar datas</option>'; });
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
+  </script>
+</body>
+</html>

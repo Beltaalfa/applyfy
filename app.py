@@ -64,6 +64,52 @@ def api_exportar():
     )
 
 
+@app.route("/api/datas")
+def api_datas():
+    """Lista de datas disponíveis para filtro (histórico)."""
+    try:
+        datas = db.get_datas_disponiveis()
+        return jsonify([{"run_at": d[0].isoformat() if hasattr(d[0], "isoformat") else str(d[0]), "label": d[1]} for d in datas])
+    except Exception:
+        return jsonify([])
+
+
+@app.route("/api/relatorio")
+def api_relatorio_por_data():
+    """Relatório de uma data específica (run_at em ISO)."""
+    run_at_str = request.args.get("run_at") or request.args.get("data")
+    if not run_at_str:
+        return jsonify({"error": "Informe run_at ou data."}), 400
+    try:
+        resultados = db.get_relatorio_por_data(run_at_str)
+        return jsonify({"run_at": run_at_str, "resultados": resultados, "total": len(resultados)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/evolucao")
+def api_evolucao():
+    """Evolução dos saldos de um produtor (email) ao longo do tempo."""
+    email = request.args.get("email")
+    if not email:
+        return jsonify({"error": "Informe email."}), 400
+    try:
+        dados = db.get_evolucao_produtor(email.strip())
+        return jsonify({"email": email, "dados": dados})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/produtores")
+def api_produtores():
+    """Lista de produtores (email + nome) para dropdown."""
+    try:
+        lista = db.get_produtores_emails()
+        return jsonify(lista)
+    except Exception:
+        return jsonify([])
+
+
 @app.route("/health")
 def health():
     return "ok", 200
@@ -72,6 +118,51 @@ def health():
 @app.route("/")
 def index():
     return send_from_directory(app.static_folder, "index.html")
+
+
+@app.route("/historico")
+def historico():
+    return send_from_directory(app.static_folder, "historico.html")
+
+
+@app.route("/evolucao")
+def evolucao():
+    return send_from_directory(app.static_folder, "evolucao.html")
+
+
+@app.route("/log")
+def log_page():
+    return send_from_directory(app.static_folder, "log.html")
+
+
+@app.route("/sw.js")
+def sw():
+    return send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript")
+
+
+@app.route("/api/log")
+def api_log():
+    """Últimas linhas do log da exportação (para a tela de acompanhamento)."""
+    lines = min(int(request.args.get("lines", 500)), 2000)
+    log_path = config.LOG_TXT
+    cron_path = os.path.join(config.DATA_DIR, "cron.log")
+    out = []
+    try:
+        if os.path.isfile(log_path):
+            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                out = f.readlines()
+        out = out[-lines:] if len(out) > lines else out
+        log_content = "".join(out)
+    except Exception as e:
+        log_content = f"[Erro ao ler log: {e}]\n"
+    try:
+        if os.path.isfile(cron_path):
+            with open(cron_path, "r", encoding="utf-8", errors="replace") as f:
+                cron = f.readlines()[-100:]
+            log_content += "\n\n--- cron.log (últimas 100 linhas) ---\n\n" + "".join(cron)
+    except Exception:
+        pass
+    return jsonify({"log": log_content})
 
 
 if __name__ == "__main__":

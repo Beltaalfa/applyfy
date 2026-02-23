@@ -11,6 +11,7 @@ import pandas as pd
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 import config
+import db
 
 config.ensure_data_dir()
 
@@ -26,7 +27,7 @@ CLICK_TIMEOUT = 30000
 def _log_txt(msg: str):
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{stamp}] {msg}"
-    print(line)
+    print(line, flush=True)
     with open(config.LOG_TXT, "a", encoding="utf-8") as f:
         f.write(line + "\n")
 
@@ -67,6 +68,24 @@ def _get_primeiro_nome_da_lista(page) -> str:
         return ""
 
 
+def _goto_with_retry(page, url, max_retries=3):
+    """Faz page.goto com retry em caso de erro de rede (ex.: ERR_NETWORK_CHANGED)."""
+    last_err = None
+    for tentativa in range(max_retries):
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+            return
+        except Exception as e:
+            last_err = e
+            if "ERR_NETWORK" in str(e) or "net::" in str(e):
+                _log_txt(f"⚠ Rede falhou (tentativa {tentativa + 1}/{max_retries}), aguardando 5s…")
+                time.sleep(5)
+            else:
+                raise
+    if last_err:
+        raise last_err
+
+
 def _clicar_proxima(page, nome_antes: str) -> bool:
     time.sleep(ESPERA_PROXIMA_DISPONIVEL)
     next_btn = page.get_by_role("button", name="Próxima")
@@ -102,13 +121,16 @@ get_primeiro_nome_da_lista = _get_primeiro_nome_da_lista
 def run_export(session_path=None, save_to_disk=True):
     """
     Executa a exportação. session_path default: config.SESSION_FILE.
-    Retorna (resultados: list[dict], log_rows: list[dict]).
+    Retorna (resultados: list[dict], log_rows: list[dict], run_at: datetime).
+    Alimenta o Postgres a cada produtor processado (run_at fixo no início).
     """
     session_path = session_path or config.SESSION_FILE
+    run_at = datetime.now()
     resultados = []
     log_rows = []
     ok_count = timeout_count = erro_count = 0
 
+    _log_txt("Abrindo browser para exportação (aguarde ~30s)...")
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context(storage_state=session_path)
@@ -119,13 +141,17 @@ def run_export(session_path=None, save_to_disk=True):
         pagina = 1
         inicio_geral = time.perf_counter()
         _log_txt("INÍCIO da exportação Applyfy")
+        if db.DATABASE_URL:
+            u = db._db_user_from_url()
+            if u:
+                _log_txt(f"Postgres: usuário '{u}' (se der erro de senha, corrija DATABASE_URL ou PG_USER no .env para o usuário do banco, ex: applyfy)")
 
         try:
             while True:
                 lista_url = f"{BASE_URL}/admin/producers?page={pagina}&pageSize={PAGE_SIZE}"
                 _log_txt(f"📄 Abrindo página {pagina}: {lista_url}")
 
-                page.goto(lista_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+                _goto_with_retry(page, lista_url)
                 _wait_lista(page)
                 nome_antes = _get_primeiro_nome_da_lista(page)
                 rows = page.locator("table tbody tr")
@@ -170,6 +196,8 @@ def run_export(session_path=None, save_to_disk=True):
                         }
                         resultados.append(data)
                         ok_count += 1
+                        if db.DATABASE_URL:
+                            db.insert_saldo_row(run_at, data)
                         dur = round(time.perf_counter() - produtor_inicio, 2)
                         _log_txt(f"✔ {nome} ({email}) | {dur}s | Página {pagina} | Linha {i+1}/{total_linhas}")
                         log_rows.append({
@@ -204,7 +232,7 @@ def run_export(session_path=None, save_to_disk=True):
                         pd.DataFrame(log_rows).to_csv(config.LOG_CSV, index=False, sep=";", encoding="utf-8-sig")
 
                     try:
-                        page.goto(lista_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT)
+                        _goto_with_retry(page, lista_url)
                         _wait_lista(page)
                     except Exception as e:
                         _log_txt(f"❌ Falha ao voltar pra lista: {e}")
@@ -226,4 +254,4 @@ def run_export(session_path=None, save_to_disk=True):
             _log_txt(f"FIM | duração total: {dur_total}s | OK={ok_count} TIMEOUT={timeout_count} ERRO={erro_count}")
             browser.close()
 
-    return resultados, log_rows
+    return resultados, log_rows, run_at

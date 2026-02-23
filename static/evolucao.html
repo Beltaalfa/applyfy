@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#c9a227">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Evolução por produtor | Applyfy</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    :root { --bg: #0a0a0b; --bg-card: #121214; --border: #1e1e22; --text: #e4e4e7; --text-muted: #71717a; --accent: #c9a227; --radius: 8px; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    .wrap { max-width: 1200px; margin: 0 auto; padding: 1rem; padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); padding-bottom: max(2rem, env(safe-area-inset-bottom)); }
+    @media (max-width: 640px) { .wrap { padding: 0.75rem; } h1 { font-size: 1.25rem; } .filtro input, .filtro select { min-width: 100%; min-height: 44px; } .chart-container { height: 280px; } }
+    h1 { font-size: 1.5rem; margin: 0 0 1rem 0; }
+    .nav { margin-bottom: 1.5rem; }
+    .nav a { color: var(--accent); text-decoration: none; margin-right: 1rem; padding: 0.5rem 0; min-height: 44px; display: inline-flex; align-items: center; }
+    .nav a:hover { text-decoration: underline; }
+    .filtro { margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
+    .filtro-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+    .filtro label { color: var(--text-muted); }
+    .filtro input[type="text"], .filtro select { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 1rem; }
+    .filtro input[type="text"] { min-width: 260px; }
+    .filtro select { min-width: 280px; }
+    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 1.5rem; }
+    .card h2 { font-size: 1rem; color: var(--text-muted); margin: 0 0 1rem 0; }
+    .empty { padding: 3rem; text-align: center; color: var(--text-muted); }
+    .chart-container { position: relative; height: 360px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav"><a href="/">← Painel</a> <a href="/historico">Histórico por data</a></nav>
+    <h1>Evolução dos saldos por produtor</h1>
+    <div class="filtro">
+      <div class="filtro-row">
+        <label for="busca">Filtrar por nome ou email:</label>
+        <input type="text" id="busca" placeholder="Digite parte do nome ou email...">
+      </div>
+      <div class="filtro-row">
+        <label for="produtor">Produtor:</label>
+        <select id="produtor">
+          <option value="">Carregando…</option>
+        </select>
+      </div>
+      <div class="filtro-row">
+        <label for="coluna">Coluna a exibir no gráfico:</label>
+        <select id="coluna">
+          <option value="saldo_disponivel">Saldo disponível</option>
+          <option value="saldo_pendente">Saldo pendente</option>
+          <option value="saldo_retido">Saldo retido</option>
+          <option value="total_sacado">Total sacado</option>
+          <option value="vendas_liquidas">Vendas líquidas</option>
+          <option value="indicacao">Indicação</option>
+          <option value="outros">Outros</option>
+        </select>
+      </div>
+      <p class="empty" id="msgProdutores" style="margin:0;"></p>
+    </div>
+    <div class="card" id="cardChart" style="display: none;">
+      <h2 id="tituloChart">Evolução ao longo do tempo</h2>
+      <div class="chart-container"><canvas id="chart"></canvas></div>
+    </div>
+    <div class="empty" id="empty">Selecione um produtor para ver a evolução gráfica.</div>
+  </div>
+  <script>
+    var chartInstance = null;
+    var listaProdutores = [];
+    var dadosEvolucaoAtuais = [];
+    var colunaLabels = { saldo_pendente: 'Saldo pendente', saldo_retido: 'Saldo retido', saldo_disponivel: 'Saldo disponível', total_sacado: 'Total sacado', vendas_liquidas: 'Vendas líquidas', indicacao: 'Indicação', outros: 'Outros' };
+    function atualizarChart() {
+      var dados = dadosEvolucaoAtuais;
+      if (!dados.length) return;
+      var colKey = document.getElementById('coluna').value || 'saldo_disponivel';
+      var labels = dados.map(function(d) { return d.run_at ? d.run_at.slice(0, 10) : ''; });
+      var oneDataset = {
+        label: colunaLabels[colKey] || colKey,
+        data: dados.map(function(x) { return x[colKey] != null ? Number(x[colKey]) : 0; }),
+        borderColor: '#c9a227',
+        backgroundColor: 'rgba(201, 162, 39, 0.15)',
+        fill: true,
+        tension: 0.2
+      };
+      if (chartInstance) chartInstance.destroy();
+      var ctx = document.getElementById('chart').getContext('2d');
+      chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: { labels: labels, datasets: [oneDataset] },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { position: 'top' } },
+          scales: {
+            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#71717a' } },
+            x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#71717a', maxRotation: 45 } }
+          }
+        }
+      });
+    }
+    function filtrarProdutores() {
+      var busca = (document.getElementById('busca').value || '').toLowerCase();
+      var sel = document.getElementById('produtor');
+      var opts = sel.querySelectorAll('option[data-nome][data-email]');
+      opts.forEach(function(opt) {
+        var show = !busca || (opt.getAttribute('data-nome') || '').toLowerCase().indexOf(busca) >= 0 || (opt.getAttribute('data-email') || '').toLowerCase().indexOf(busca) >= 0;
+        opt.style.display = show ? '' : 'none';
+      });
+    }
+    fetch('/api/produtores').then(function(r){ return r.json(); }).then(function(lista) {
+      listaProdutores = lista || [];
+      var sel = document.getElementById('produtor');
+      var msgProd = document.getElementById('msgProdutores');
+      if (!listaProdutores.length && msgProd) {
+        msgProd.textContent = 'Nenhum produtor no histórico. O histórico é salvo no Postgres quando DATABASE_URL está no .env e o job (run_daily.py) já rodou com sucesso.';
+      } else if (msgProd) msgProd.textContent = '';
+      sel.innerHTML = '<option value="">Selecione um produtor</option>' + (listaProdutores.map(function(p) {
+        var nome = (p.nome || p.email || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        var email = (p.email || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+        return '<option value="' + email + '" data-nome="' + nome + '" data-email="' + email + '">' + nome + ' (' + email + ')</option>';
+      }).join(''));
+      document.getElementById('busca').addEventListener('input', filtrarProdutores);
+      document.getElementById('busca').addEventListener('keyup', filtrarProdutores);
+      document.getElementById('coluna').addEventListener('change', function() { if (dadosEvolucaoAtuais.length) atualizarChart(); });
+      sel.addEventListener('change', function() {
+        var email = sel.value;
+        if (!email) {
+          document.getElementById('cardChart').style.display = 'none';
+          document.getElementById('empty').style.display = 'block';
+          if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+          return;
+        }
+        fetch('/api/evolucao?email=' + encodeURIComponent(email))
+          .then(function(r){ return r.json(); })
+          .then(function(res) {
+            var dados = res.dados || [];
+            dadosEvolucaoAtuais = dados;
+            document.getElementById('empty').style.display = dados.length ? 'none' : 'block';
+            document.getElementById('tituloChart').textContent = 'Evolução: ' + (dados[0] && dados[0].nome ? dados[0].nome : email);
+            document.getElementById('cardChart').style.display = dados.length ? 'block' : 'none';
+            if (!dados.length) {
+              if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+              return;
+            }
+            atualizarChart();
+          })
+          .catch(function() {
+            document.getElementById('cardChart').style.display = 'none';
+            document.getElementById('empty').style.display = 'block';
+            document.getElementById('empty').textContent = 'Erro ao carregar evolução.';
+          });
+      });
+    }).catch(function() { document.getElementById('produtor').innerHTML = '<option value="">Erro ao carregar produtores</option>'; });
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
+  </script>
+</body>
+</html>

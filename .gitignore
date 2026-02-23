@@ -5,6 +5,7 @@ __pycache__/
 data/
 *.json
 !static/
+!static/manifest.json
 perfil_applyfy/
 *.log
 .env.local
