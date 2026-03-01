@@ -24,6 +24,13 @@
     .toolbar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
     .toolbar label { color: var(--text-muted); display: flex; align-items: center; gap: 0.5rem; }
     .toolbar input[type="checkbox"] { accent-color: var(--accent); }
+    .btn-job { padding: 0.5rem 1rem; border-radius: var(--radius); border: none; font-family: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; min-height: 44px; transition: opacity 0.2s; }
+    .btn-job:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-start { background: var(--accent); color: #0a0a0b; }
+    .btn-stop { background: #dc2626; color: #fff; }
+    .btn-clear { background: var(--border); color: var(--text-muted); }
+    .btn-clear:hover { background: #2a2a2e; color: var(--text); }
+    .toolbar-msg { font-size: 0.8rem; color: var(--text-muted); margin-left: 0.5rem; }
     .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
     .log-box { padding: 1rem; max-height: 70vh; overflow-y: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; line-height: 1.5; }
     .log-box:empty::before { content: 'Carregando…'; color: var(--text-muted); }
@@ -36,6 +43,10 @@
     <h1>Log da exportação</h1>
     <div class="toolbar">
       <label><input type="checkbox" id="autoRefresh" checked> Atualizar a cada 3 s</label>
+      <button type="button" class="btn-job btn-start" id="btnStart">Iniciar processo</button>
+      <button type="button" class="btn-job btn-stop" id="btnStop">Pausar processo</button>
+      <button type="button" class="btn-job btn-clear" id="btnClear">Limpar log</button>
+      <span class="toolbar-msg" id="jobMsg"></span>
     </div>
     <div class="card">
       <div class="log-box" id="logBox"></div>
@@ -65,6 +76,51 @@
       } else {
         if (autoRefreshId) clearInterval(autoRefreshId);
       }
+    });
+    function setJobMsg(msg, isError) {
+      var el = document.getElementById('jobMsg');
+      el.textContent = msg || '';
+      el.style.color = isError ? '#dc2626' : '';
+    }
+    document.getElementById('btnStart').addEventListener('click', function() {
+      var btn = this;
+      btn.disabled = true;
+      setJobMsg('Iniciando…');
+      fetch('/api/job/start', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          setJobMsg(data.message || 'Processo iniciado.');
+          if (data.ok) loadLog();
+        })
+        .catch(function(e) { setJobMsg('Erro: ' + (e.message || 'falha na requisição'), true); })
+        .finally(function() { btn.disabled = false; });
+    });
+    document.getElementById('btnStop').addEventListener('click', function() {
+      var btn = this;
+      btn.disabled = true;
+      setJobMsg('Enviando parada…');
+      fetch('/api/job/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          setJobMsg(data.message || 'Parada enviada.');
+          if (data.ok) loadLog();
+        })
+        .catch(function(e) { setJobMsg('Erro: ' + (e.message || 'falha na requisição'), true); })
+        .finally(function() { btn.disabled = false; });
+    });
+    document.getElementById('btnClear').addEventListener('click', function() {
+      var btn = this;
+      if (!confirm('Limpar todo o conteúdo do log? Isso não pode ser desfeito.')) return;
+      btn.disabled = true;
+      setJobMsg('Limpando…');
+      fetch('/api/log/clear', { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          setJobMsg(data.message || 'Log limpo.');
+          if (data.ok) loadLog();
+        })
+        .catch(function(e) { setJobMsg('Erro: ' + (e.message || 'falha na requisição'), true); })
+        .finally(function() { btn.disabled = false; });
     });
     loadLog();
     autoRefreshId = setInterval(loadLog, 3000);

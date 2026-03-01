@@ -191,3 +191,8 @@ Siga as perguntas na tela. Depois o site passará a abrir em HTTPS.
 
 - **Testar só o login (com browser visível, para debug):**  
   `cd /var/www/applyfy && . env.sh && HEADLESS=0 /var/www/applyfy/venv/bin/python 01_salvar_sessao.py`
+
+- **Erro “Executable doesn't exist” (Chromium do Playwright):**  
+  O job roda como `www-data` (cron ou painel). Instale o browser para esse usuário:  
+  `sudo -u www-data /var/www/applyfy/venv/bin/playwright install chromium`  
+  *(Se o job for rodado por outro usuário, use o mesmo usuário no lugar de `www-data`.)*

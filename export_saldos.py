@@ -17,11 +17,11 @@ config.ensure_data_dir()
 
 BASE_URL = "https://app.applyfy.com.br"
 PAGE_SIZE = 20
-ESPERA_CARREGAR_LISTA = 7
+ESPERA_CARREGAR_LISTA = 10  # segundos após clicar (site pode demorar)
 ESPERA_PROXIMA_DISPONIVEL = 7
 NAV_TIMEOUT = 120000
-SEL_TIMEOUT = 60000
-CLICK_TIMEOUT = 30000
+SEL_TIMEOUT = 90000   # 90s para seletores (página pode demorar)
+CLICK_TIMEOUT = 60000 # 60s para cliques (tela de saldo pode ser lenta)
 
 
 def _log_txt(msg: str):
@@ -132,8 +132,14 @@ def run_export(session_path=None, save_to_disk=True):
 
     _log_txt("Abrindo browser para exportação (aguarde ~30s)...")
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(storage_state=session_path)
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--disable-application-cache", "--disable-cache", "--disk-cache-size=0"],
+        )
+        context = browser.new_context(
+            storage_state=session_path,
+            ignore_https_errors=False,
+        )
         page = context.new_page()
         page.set_default_timeout(SEL_TIMEOUT)
         page.set_default_navigation_timeout(NAV_TIMEOUT)

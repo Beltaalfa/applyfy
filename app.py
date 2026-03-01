@@ -3,13 +3,18 @@
 API Flask do painel Applyfy: último relatório (JSON) e download XLSX/CSV.
 """
 import os
+import subprocess
 from datetime import datetime
 
 import pandas as pd
 from flask import Flask, request, jsonify, send_file, send_from_directory
+from dotenv import load_dotenv
 
 import config
 import db
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 app.config["JSON_AS_ASCII"] = False
@@ -140,6 +145,54 @@ def sw():
     return send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript")
 
 
+@app.route("/api/job/start", methods=["POST"])
+def api_job_start():
+    """Inicia o job de exportação em background (mesmo que rodar_job.sh)."""
+    try:
+        config.ensure_data_dir()
+        log_path = os.path.join(config.DATA_DIR, "cron.log")
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        env.setdefault("APPLYFY_DATA_DIR", config.DATA_DIR)
+        py = os.path.join(BASE_DIR, "venv", "bin", "python")
+        if not os.path.isfile(py):
+            py = "python3"
+        script = os.path.join(BASE_DIR, "run_daily.py")
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            subprocess.Popen(
+                [py, script],
+                cwd=BASE_DIR,
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        return jsonify({"ok": True, "message": "Processo iniciado. Acompanhe o log abaixo."})
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
+
+
+@app.route("/api/job/stop", methods=["POST"])
+def api_job_stop():
+    """Interrompe o job em execução (run_daily.py e Chromium)."""
+    pkill_bin = "/usr/bin/pkill" if os.path.isfile("/usr/bin/pkill") else "pkill"
+    try:
+        for pattern in ["run_daily.py", "01_salvar_sessao.py", "chromium"]:
+            subprocess.run(
+                [pkill_bin, "-f", pattern],
+                capture_output=True,
+                timeout=5,
+                env={**os.environ, "PATH": "/usr/bin:/bin"},
+            )
+        return jsonify({"ok": True, "message": "Comando de parada enviado. O processo pode levar alguns segundos para encerrar."})
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "message": "Timeout ao tentar parar."}), 500
+    except FileNotFoundError:
+        return jsonify({"ok": False, "message": "pkill não encontrado. Instale o pacote procps (apt install procps)."}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
+
+
 @app.route("/api/log")
 def api_log():
     """Últimas linhas do log da exportação (para a tela de acompanhamento)."""
@@ -163,6 +216,23 @@ def api_log():
     except Exception:
         pass
     return jsonify({"log": log_content})
+
+
+@app.route("/api/log/clear", methods=["POST"])
+def api_log_clear():
+    """Limpa os arquivos de log (applyfy_log.txt e cron.log)."""
+    try:
+        log_path = config.LOG_TXT
+        cron_path = os.path.join(config.DATA_DIR, "cron.log")
+        cleared = []
+        for path in [log_path, cron_path]:
+            if os.path.isfile(path):
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("")
+                cleared.append(os.path.basename(path))
+        return jsonify({"ok": True, "message": "Log limpo." if cleared else "Nenhum arquivo de log para limpar."})
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
 
 
 if __name__ == "__main__":

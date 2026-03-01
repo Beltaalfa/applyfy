@@ -153,7 +153,9 @@ def main():
                 pass
 
             # Garante que estamos logados: navega para o relatório
-            page.goto(REPORT_URL, wait_until="networkidle", timeout=60000)
+            # domcontentloaded evita timeout (networkidle exige rede parada e costuma estourar)
+            page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(3000)
 
             # Se ainda estiver na página de login, algo falhou
             if "auth" in page.url.lower():
