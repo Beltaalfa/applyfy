@@ -83,6 +83,78 @@ def init_db():
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_saldos_historico_run_at ON saldos_historico(run_at);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_saldos_historico_email ON saldos_historico(email);")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS applyfy_transactions (
+                id SERIAL PRIMARY KEY,
+                transaction_id TEXT NOT NULL,
+                event TEXT NOT NULL,
+                offer_code TEXT,
+                producer_id TEXT,
+                payload JSONB NOT NULL,
+                received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_applyfy_transaction_event UNIQUE (transaction_id, event)
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_applyfy_transactions_event ON applyfy_transactions(event);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_applyfy_transactions_offer_code ON applyfy_transactions(offer_code);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_applyfy_transactions_received_at ON applyfy_transactions(received_at);")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS applyfy_producer_taxes (
+                producer_id TEXT PRIMARY KEY,
+                email TEXT,
+                taxes_snapshot JSONB NOT NULL DEFAULT '{}',
+                fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_applyfy_producer_taxes_email ON applyfy_producer_taxes(email);")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS applyfy_offer_producer (
+                offer_code TEXT PRIMARY KEY,
+                producer_id TEXT NOT NULL,
+                producer_name TEXT,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS financeiro_categorias (
+                id SERIAL PRIMARY KEY,
+                nome TEXT NOT NULL,
+                tipo TEXT NOT NULL CHECK (tipo IN ('receita','despesa')),
+                ativa BOOLEAN NOT NULL DEFAULT true,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_financeiro_categorias_tipo ON financeiro_categorias(tipo);")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS financeiro_lancamentos (
+                id SERIAL PRIMARY KEY,
+                data DATE NOT NULL,
+                valor NUMERIC(16,2) NOT NULL,
+                tipo TEXT NOT NULL CHECK (tipo IN ('receita','despesa')),
+                categoria_id INT REFERENCES financeiro_categorias(id) ON DELETE SET NULL,
+                descricao TEXT,
+                natureza_dfc TEXT CHECK (natureza_dfc IN ('operacional','investimento','financiamento')),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_financeiro_lancamentos_data ON financeiro_lancamentos(data);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_financeiro_lancamentos_tipo ON financeiro_lancamentos(tipo);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_financeiro_lancamentos_categoria ON financeiro_lancamentos(categoria_id);")
+
+        cur.execute("SELECT 1 FROM financeiro_categorias LIMIT 1")
+        if cur.fetchone() is None:
+            for nome, tipo in [
+                ("Vendas", "receita"), ("Serviços", "receita"),
+                ("Salários", "despesa"), ("Luz", "despesa"), ("Água", "despesa"),
+                ("Aluguel", "despesa"), ("Outros", "despesa"),
+            ]:
+                cur.execute(
+                    "INSERT INTO financeiro_categorias (nome, tipo) VALUES (%s, %s)",
+                    (nome, tipo),
+                )
 
 
 def _row_to_historico(run_at, row):
@@ -280,3 +352,462 @@ def get_produtores_emails():
         )
         rows = cur.fetchall()
     return [{"email": r[0], "nome": r[1] or r[0]} for r in rows]
+
+
+def insert_webhook_transaction(transaction_id, event, offer_code, producer_id, payload):
+    """Insere evento de webhook (idempotente). Retorna True se inseriu, False se duplicado."""
+    if not DATABASE_URL:
+        return False
+    init_db()
+    with cursor() as cur:
+        try:
+            cur.execute(
+                """
+                INSERT INTO applyfy_transactions (transaction_id, event, offer_code, producer_id, payload)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (transaction_id, event) DO NOTHING;
+                """,
+                (
+                    str(transaction_id),
+                    str(event),
+                    offer_code and str(offer_code)[:64] or None,
+                    producer_id and str(producer_id)[:64] or None,
+                    json.dumps(payload, ensure_ascii=False) if isinstance(payload, dict) else payload,
+                ),
+            )
+            return cur.rowcount > 0
+        except Exception:
+            return False
+
+
+def list_transactions(date_from=None, date_to=None, event=None, offer_code=None, limit=500):
+    """Lista transações com filtros. Retorna lista de dicts."""
+    if not DATABASE_URL:
+        return []
+    init_db()
+    conditions = []
+    params = []
+    if date_from:
+        conditions.append("received_at >= %s")
+        params.append(date_from)
+    if date_to:
+        conditions.append("received_at <= %s")
+        params.append(date_to)
+    if event:
+        conditions.append("event = %s")
+        params.append(event)
+    if offer_code:
+        conditions.append("offer_code = %s")
+        params.append(offer_code)
+    params.append(min(int(limit), 1000))
+    where = " AND ".join(conditions) if conditions else "1=1"
+    with cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT id, transaction_id, event, offer_code, producer_id, payload, received_at
+            FROM applyfy_transactions
+            WHERE {where}
+            ORDER BY received_at DESC
+            LIMIT %s;
+            """,
+            params,
+        )
+        rows = cur.fetchall()
+    return [
+        {
+            "id": r[0],
+            "transaction_id": r[1],
+            "event": r[2],
+            "offer_code": r[3],
+            "producer_id": r[4],
+            "payload": r[5] if isinstance(r[5], dict) else (json.loads(r[5]) if r[5] else {}),
+            "received_at": r[6].isoformat() if hasattr(r[6], "isoformat") else str(r[6]),
+        }
+        for r in rows
+    ]
+
+
+def save_producer_taxes(producer_id, email, taxes_snapshot):
+    """Salva ou atualiza cache de taxas do produtor."""
+    if not DATABASE_URL:
+        return
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO applyfy_producer_taxes (producer_id, email, taxes_snapshot, fetched_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (producer_id) DO UPDATE SET
+                email = EXCLUDED.email,
+                taxes_snapshot = EXCLUDED.taxes_snapshot,
+                fetched_at = NOW();
+            """,
+            (str(producer_id), email or None, json.dumps(taxes_snapshot, ensure_ascii=False) if isinstance(taxes_snapshot, dict) else taxes_snapshot),
+        )
+
+
+def get_producer_taxes(producer_id=None, email=None):
+    """Retorna último taxes_snapshot e fetched_at por producer_id ou email."""
+    if not DATABASE_URL:
+        return None
+    init_db()
+    with cursor() as cur:
+        if producer_id:
+            cur.execute(
+                "SELECT taxes_snapshot, fetched_at FROM applyfy_producer_taxes WHERE producer_id = %s;",
+                (str(producer_id),),
+            )
+        elif email:
+            cur.execute(
+                "SELECT taxes_snapshot, fetched_at FROM applyfy_producer_taxes WHERE email = %s;",
+                (email,),
+            )
+        else:
+            return None
+        row = cur.fetchone()
+    if not row:
+        return None
+    snapshot = row[0]
+    if isinstance(snapshot, str):
+        snapshot = json.loads(snapshot) if snapshot else {}
+    return {"taxes_snapshot": snapshot, "fetched_at": row[1]}
+
+
+def save_offer_producer(offer_code, producer_id, producer_name=None):
+    """Salva mapeamento offer_code -> produtor (para preencher transações que não trazem produtor no payload)."""
+    if not DATABASE_URL or not offer_code or not producer_id:
+        return
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO applyfy_offer_producer (offer_code, producer_id, producer_name, updated_at)
+            VALUES (%s, %s, %s, NOW())
+            ON CONFLICT (offer_code) DO UPDATE SET
+                producer_id = EXCLUDED.producer_id,
+                producer_name = EXCLUDED.producer_name,
+                updated_at = NOW();
+            """,
+            (str(offer_code).strip()[:64], str(producer_id)[:64], (producer_name or "")[:256] or None),
+        )
+
+
+def get_producer_by_offer_code(offer_code):
+    """Retorna {producer_id, producer_name} para um offer_code, ou None."""
+    if not DATABASE_URL or not offer_code:
+        return None
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            "SELECT producer_id, producer_name FROM applyfy_offer_producer WHERE offer_code = %s;",
+            (str(offer_code).strip(),),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {"producer_id": row[0], "producer_name": row[1]}
+
+
+def list_producer_created_events(limit=200):
+    """Lista eventos PRODUCER_CREATED para sincronizar offer_code -> produtor."""
+    if not DATABASE_URL:
+        return []
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT producer_id, payload FROM applyfy_transactions
+            WHERE event = 'PRODUCER_CREATED' AND producer_id IS NOT NULL
+            ORDER BY received_at DESC LIMIT %s;
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+    seen = set()
+    out = []
+    for r in rows:
+        pid = r[0]
+        if pid in seen:
+            continue
+        seen.add(pid)
+        p = r[1] if isinstance(r[1], dict) else (json.loads(r[1]) if r[1] else {})
+        name = (p.get("producer") or {}).get("name")
+        out.append((pid, name))
+    return out
+
+
+def list_webhook_producers(limit=500):
+    """
+    Lista produtores únicos que aparecem no webhook (PRODUCER_CREATED e applyfy_offer_producer).
+    Retorna lista de dicts: { producer_id, producer_name, offer_codes[] }.
+    """
+    if not DATABASE_URL:
+        return []
+    init_db()
+    by_id = {}
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT producer_id, payload FROM applyfy_transactions
+            WHERE event = 'PRODUCER_CREATED' AND producer_id IS NOT NULL
+            ORDER BY received_at DESC;
+            """
+        )
+        for r in cur.fetchall():
+            pid = r[0]
+            if pid not in by_id:
+                p = r[1] if isinstance(r[1], dict) else (json.loads(r[1]) if r[1] else {})
+                name = (p.get("producer") or {}).get("name")
+                by_id[pid] = {"producer_id": pid, "producer_name": name or None, "offer_codes": []}
+        cur.execute("SELECT offer_code, producer_id, producer_name FROM applyfy_offer_producer;")
+        for r in cur.fetchall():
+            code, pid, name = r[0], r[1], r[2]
+            if pid not in by_id:
+                by_id[pid] = {"producer_id": pid, "producer_name": name, "offer_codes": []}
+            if code and code not in by_id[pid]["offer_codes"]:
+                by_id[pid]["offer_codes"].append(code)
+            if name and not by_id[pid]["producer_name"]:
+                by_id[pid]["producer_name"] = name
+    out = list(by_id.values())[: int(limit)]
+    return sorted(out, key=lambda x: (x["producer_name"] or "").lower())
+
+
+def list_categorias(tipo=None):
+    if not DATABASE_URL:
+        return []
+    init_db()
+    with cursor() as cur:
+        if tipo:
+            cur.execute("SELECT id, nome, tipo, ativa, created_at FROM financeiro_categorias WHERE tipo = %s ORDER BY nome", (tipo,))
+        else:
+            cur.execute("SELECT id, nome, tipo, ativa, created_at FROM financeiro_categorias ORDER BY tipo, nome")
+        rows = cur.fetchall()
+    return [{"id": r[0], "nome": r[1], "tipo": r[2], "ativa": bool(r[3]), "created_at": r[4].isoformat() if hasattr(r[4], "isoformat") else str(r[4])} for r in rows]
+
+
+def get_categoria(id):
+    if not DATABASE_URL or not id:
+        return None
+    init_db()
+    with cursor() as cur:
+        cur.execute("SELECT id, nome, tipo, ativa, created_at FROM financeiro_categorias WHERE id = %s", (int(id),))
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {"id": row[0], "nome": row[1], "tipo": row[2], "ativa": bool(row[3]), "created_at": row[4].isoformat() if hasattr(row[4], "isoformat") else str(row[4])}
+
+
+def create_categoria(nome, tipo):
+    if not DATABASE_URL or not nome or tipo not in ("receita", "despesa"):
+        return None
+    init_db()
+    with cursor() as cur:
+        cur.execute("INSERT INTO financeiro_categorias (nome, tipo) VALUES (%s, %s) RETURNING id, nome, tipo, ativa, created_at", (nome.strip()[:200], tipo))
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {"id": row[0], "nome": row[1], "tipo": row[2], "ativa": bool(row[3]), "created_at": row[4].isoformat() if hasattr(row[4], "isoformat") else str(row[4])}
+
+
+def update_categoria(id, nome=None, tipo=None, ativa=None):
+    if not DATABASE_URL or not id:
+        return False
+    init_db()
+    updates, params = [], []
+    if nome is not None:
+        updates.append("nome = %s")
+        params.append(nome.strip()[:200])
+    if tipo is not None and tipo in ("receita", "despesa"):
+        updates.append("tipo = %s")
+        params.append(tipo)
+    if ativa is not None:
+        updates.append("ativa = %s")
+        params.append(bool(ativa))
+    if not updates:
+        return True
+    params.append(int(id))
+    with cursor() as cur:
+        cur.execute("UPDATE financeiro_categorias SET " + ", ".join(updates) + " WHERE id = %s", params)
+        return cur.rowcount > 0
+
+
+def delete_categoria(id):
+    if not DATABASE_URL or not id:
+        return False
+    init_db()
+    with cursor() as cur:
+        cur.execute("DELETE FROM financeiro_categorias WHERE id = %s", (int(id),))
+        return cur.rowcount > 0
+
+
+def _parse_period(date_from=None, date_to=None, mes=None, ano=None):
+    if mes is not None and ano is not None:
+        try:
+            from calendar import monthrange
+            mes, ano = int(mes), int(ano)
+            _, last = monthrange(ano, mes)
+            date_from = f"{ano:04d}-{mes:02d}-01"
+            date_to = f"{ano:04d}-{mes:02d}-{last:02d}"
+        except (ValueError, TypeError):
+            pass
+    return date_from, date_to
+
+
+def list_lancamentos(date_from=None, date_to=None, mes=None, ano=None, tipo=None, categoria_id=None, limit=2000):
+    if not DATABASE_URL:
+        return []
+    date_from, date_to = _parse_period(date_from, date_to, mes, ano)
+    init_db()
+    conditions, params = [], []
+    if date_from:
+        conditions.append("l.data >= %s")
+        params.append(date_from)
+    if date_to:
+        conditions.append("l.data <= %s")
+        params.append(date_to)
+    if tipo:
+        conditions.append("l.tipo = %s")
+        params.append(tipo)
+    if categoria_id is not None:
+        conditions.append("l.categoria_id = %s")
+        params.append(int(categoria_id))
+    params.append(min(int(limit), 2000))
+    where = " AND ".join(conditions) if conditions else "1=1"
+    with cursor() as cur:
+        cur.execute(
+            f"SELECT l.id, l.data, l.valor, l.tipo, l.categoria_id, c.nome, l.descricao, l.natureza_dfc, l.created_at, l.updated_at FROM financeiro_lancamentos l LEFT JOIN financeiro_categorias c ON c.id = l.categoria_id WHERE {where} ORDER BY l.data DESC, l.id DESC LIMIT %s",
+            params,
+        )
+        rows = cur.fetchall()
+    return [
+        {"id": r[0], "data": r[1].isoformat() if hasattr(r[1], "isoformat") else str(r[1]), "valor": float(r[2]) if r[2] else 0, "tipo": r[3], "categoria_id": r[4], "categoria_nome": r[5], "descricao": r[6], "natureza_dfc": r[7], "created_at": r[8].isoformat() if hasattr(r[8], "isoformat") else str(r[8]), "updated_at": r[9].isoformat() if hasattr(r[9], "isoformat") else str(r[9])}
+        for r in rows
+    ]
+
+
+def get_lancamento(id):
+    if not DATABASE_URL or not id:
+        return None
+    init_db()
+    with cursor() as cur:
+        cur.execute("SELECT l.id, l.data, l.valor, l.tipo, l.categoria_id, c.nome, l.descricao, l.natureza_dfc, l.created_at, l.updated_at FROM financeiro_lancamentos l LEFT JOIN financeiro_categorias c ON c.id = l.categoria_id WHERE l.id = %s", (int(id),))
+        row = cur.fetchone()
+    if not row:
+        return None
+    return {"id": row[0], "data": row[1].isoformat() if hasattr(row[1], "isoformat") else str(row[1]), "valor": float(row[2]) if row[2] else 0, "tipo": row[3], "categoria_id": row[4], "categoria_nome": row[5], "descricao": row[6], "natureza_dfc": row[7], "created_at": row[8].isoformat() if hasattr(row[8], "isoformat") else str(row[8]), "updated_at": row[9].isoformat() if hasattr(row[9], "isoformat") else str(row[9])}
+
+
+def create_lancamento(data, valor, tipo, categoria_id=None, descricao=None, natureza_dfc=None):
+    if not DATABASE_URL or tipo not in ("receita", "despesa"):
+        return None
+    try:
+        val = abs(float(valor))
+    except (TypeError, ValueError):
+        return None
+    init_db()
+    cat_id = int(categoria_id) if categoria_id else None
+    nat = naturaleza_dfc if naturaleza_dfc in ("operacional", "investimento", "financiamento") else None
+    with cursor() as cur:
+        cur.execute("INSERT INTO financeiro_lancamentos (data, valor, tipo, categoria_id, descricao, natureza_dfc, updated_at) VALUES (%s, %s, %s, %s, %s, %s, NOW()) RETURNING id", (data, val, tipo, cat_id, (descricao or "").strip() or None, nat))
+        row = cur.fetchone()
+    if not row:
+        return None
+    return get_lancamento(row[0])
+
+
+def update_lancamento(id, data=None, valor=None, tipo=None, categoria_id=None, descricao=None, naturaleza_dfc=None):
+    if not DATABASE_URL or not id:
+        return False
+    updates, params = ["updated_at = NOW()"], []
+    if data is not None:
+        updates.append("data = %s")
+        params.append(data)
+    if valor is not None:
+        try:
+            updates.append("valor = %s")
+            params.append(abs(float(valor)))
+        except (TypeError, ValueError):
+            pass
+    if tipo is not None and tipo in ("receita", "despesa"):
+        updates.append("tipo = %s")
+        params.append(tipo)
+    if categoria_id is not None:
+        updates.append("categoria_id = %s")
+        params.append(int(categoria_id) if categoria_id else None)
+    if descricao is not None:
+        updates.append("descricao = %s")
+        params.append((descricao or "").strip() or None)
+    if naturaleza_dfc is not None:
+        updates.append("natureza_dfc = %s")
+        params.append(natureza_dfc if naturaleza_dfc in ("operacional", "investimento", "financiamento") else None)
+    if len(params) == 0:
+        return True
+    params.append(int(id))
+    with cursor() as cur:
+        cur.execute("UPDATE financeiro_lancamentos SET " + ", ".join(updates) + " WHERE id = %s", params)
+        return cur.rowcount > 0
+
+
+def delete_lancamento(id):
+    if not DATABASE_URL or not id:
+        return False
+    init_db()
+    with cursor() as cur:
+        cur.execute("DELETE FROM financeiro_lancamentos WHERE id = %s", (int(id),))
+        return cur.rowcount > 0
+
+
+def relatorio_fluxo_caixa(date_from=None, date_to=None, mes=None, ano=None):
+    if not DATABASE_URL:
+        return {"dias": [], "total_receitas": 0, "total_despesas": 0, "saldo": 0}
+    date_from, date_to = _parse_period(date_from, date_to, mes, ano)
+    if not date_from or not date_to:
+        return {"dias": [], "total_receitas": 0, "total_despesas": 0, "saldo": 0}
+    init_db()
+    with cursor() as cur:
+        cur.execute("SELECT data, COALESCE(SUM(CASE WHEN tipo = 'receita' THEN valor ELSE 0 END), 0), COALESCE(SUM(CASE WHEN tipo = 'despesa' THEN valor ELSE 0 END), 0) FROM financeiro_lancamentos WHERE data >= %s AND data <= %s GROUP BY data ORDER BY data", (date_from, date_to))
+        rows = cur.fetchall()
+    dias = [{"data": r[0].isoformat() if hasattr(r[0], "isoformat") else str(r[0]), "receitas": float(r[1]), "despesas": float(r[2]), "saldo": float(r[1]) - float(r[2])} for r in rows]
+    tr = sum(d["receitas"] for d in dias)
+    td = sum(d["despesas"] for d in dias)
+    return {"dias": dias, "total_receitas": tr, "total_despesas": td, "saldo": tr - td}
+
+
+def relatorio_dre(date_from=None, date_to=None, mes=None, ano=None):
+    if not DATABASE_URL:
+        return {"receitas": [], "despesas": [], "total_receitas": 0, "total_despesas": 0, "resultado": 0}
+    date_from, date_to = _parse_period(date_from, date_to, mes, ano)
+    if not date_from or not date_to:
+        return {"receitas": [], "despesas": [], "total_receitas": 0, "total_despesas": 0, "resultado": 0}
+    init_db()
+    with cursor() as cur:
+        cur.execute("SELECT COALESCE(c.nome, 'Sem categoria'), l.tipo, SUM(l.valor) FROM financeiro_lancamentos l LEFT JOIN financeiro_categorias c ON c.id = l.categoria_id WHERE l.data >= %s AND l.data <= %s GROUP BY c.nome, l.tipo ORDER BY l.tipo, SUM(l.valor) DESC", (date_from, date_to))
+        rows = cur.fetchall()
+    receitas = [{"categoria": r[0], "valor": float(r[2])} for r in rows if r[1] == "receita"]
+    despesas = [{"categoria": r[0], "valor": float(r[2])} for r in rows if r[1] == "despesa"]
+    tr = sum(x["valor"] for x in receitas)
+    td = sum(x["valor"] for x in despesas)
+    return {"receitas": receitas, "despesas": despesas, "total_receitas": tr, "total_despesas": td, "resultado": tr - td}
+
+
+def relatorio_dfc(date_from=None, date_to=None, mes=None, ano=None):
+    if not DATABASE_URL:
+        return {"operacional": {"entradas": 0, "saidas": 0, "saldo": 0}, "investimento": {"entradas": 0, "saidas": 0, "saldo": 0}, "financiamento": {"entradas": 0, "saidas": 0, "saldo": 0}}
+    date_from, date_to = _parse_period(date_from, date_to, mes, ano)
+    if not date_from or not date_to:
+        return {"operacional": {"entradas": 0, "saidas": 0, "saldo": 0}, "investimento": {"entradas": 0, "saidas": 0, "saldo": 0}, "financiamento": {"entradas": 0, "saidas": 0, "saldo": 0}}
+    init_db()
+    with cursor() as cur:
+        cur.execute("SELECT COALESCE(NULLIF(natureza_dfc, ''), 'operacional'), tipo, SUM(valor) FROM financeiro_lancamentos WHERE data >= %s AND data <= %s GROUP BY COALESCE(NULLIF(natureza_dfc, ''), 'operacional'), tipo", (date_from, date_to))
+        rows = cur.fetchall()
+    result = {n: {"entradas": 0.0, "saidas": 0.0, "saldo": 0.0} for n in ("operacional", "investimento", "financiamento")}
+    for r in rows:
+        nat = r[0] if r[0] in result else "operacional"
+        v = float(r[2])
+        if r[1] == "receita":
+            result[nat]["entradas"] += v
+        else:
+            result[nat]["saidas"] += v
+    for nat in result:
+        result[nat]["saldo"] = result[nat]["entradas"] - result[nat]["saidas"]
+    return result

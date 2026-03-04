@@ -76,6 +76,18 @@ Preencha estas três linhas com **seus** dados da Applyfy (email, senha e chave 
 - `APPLYFY_PASSWORD='sua_senha'`   ← use **aspas simples** se a senha tiver $ # ( ) *
 - `APPLYFY_TOTP_SECRET=SUA_CHAVE_2FA`
 
+**Opcional – API Admin e Webhooks:** para receber transações em tempo real e consultar taxas dos produtores, obtenha no painel ApplyFy (Integrações / API) as chaves e configure no `.env`:
+
+- `APPLYFY_PUBLIC_KEY=...`
+- `APPLYFY_SECRET_KEY=...`
+- `APPLYFY_WEBHOOK_TOKEN=...`   ← mesmo valor que você configurar em Integrações > Webhooks no painel ApplyFy
+
+**URL do webhook** para cadastrar no painel ApplyFy (após o site estar em HTTPS):
+
+- `https://applyfy.northempresarial.com/api/webhooks/applyfy`
+
+Garanta que o Nginx permita POST nessa rota e que o certificado SSL esteja ativo.
+
 Salve: no nano é **Ctrl+O**, Enter, depois **Ctrl+X** para sair.
 
 ---
@@ -188,6 +200,9 @@ Siga as perguntas na tela. Depois o site passará a abrir em HTTPS.
 - **Rodar o job em background e acompanhar pelo painel de log:**  
   `cd /var/www/applyfy && ./rodar_job.sh`  
   *(O terminal só mostra “Job iniciado. Acompanhe em https://applyfy.northempresarial.com/log”; o restante sai em* `data/cron.log` *e na tela **Log** do painel.)*
+
+- **Retry e checkpoint:** Se o job cair (timeout, rede, etc.), ele é **reiniciado automaticamente** (até 10 tentativas, com 45 s de espera entre uma e outra). O progresso é salvo em `data/export_checkpoint.json`; na próxima tentativa o script **retoma de onde parou** em vez de recomeçar a lista. Ao terminar a lista com sucesso, o checkpoint é removido. Para **forçar recomeço do zero** na próxima execução, apague o arquivo:  
+  `rm -f /var/www/applyfy/data/export_checkpoint.json`
 
 - **Testar só o login (com browser visível, para debug):**  
   `cd /var/www/applyfy && . env.sh && HEADLESS=0 /var/www/applyfy/venv/bin/python 01_salvar_sessao.py`

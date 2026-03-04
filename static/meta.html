@@ -4,9 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#c9a227">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Painel Saldos | Applyfy</title>
+  <title>Meta | Applyfy</title>
   <link rel="manifest" href="/static/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -20,7 +18,6 @@
       --text-muted: #71717a;
       --accent: #c9a227;
       --accent-hover: #d4af37;
-      --success: #22c55e;
       --radius: 8px;
     }
     * { box-sizing: border-box; }
@@ -138,24 +135,39 @@
       text-align: center;
       color: var(--text-muted);
     }
-    .loading { opacity: 0.6; pointer-events: none; }
+    select.tag-select {
+      width: 100%;
+      min-width: 120px;
+      padding: 0.4rem 0.5rem;
+      font-family: inherit;
+      font-size: 0.8125rem;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    select.tag-select:hover { border-color: var(--accent); }
+    .pct-ok { color: #22c55e; }
+    .pct-warn { color: #eab308; }
+    .pct-low { color: var(--text-muted); }
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
       <div>
-        <h1>Painel de saldos – produtores</h1>
+        <h1>Meta</h1>
         <p class="last-run" id="lastRun">Carregando…</p>
       </div>
       <div class="actions">
-        <a href="/historico" class="btn btn-secondary">Histórico por data</a>
-        <a href="/evolucao" class="btn btn-secondary">Evolução por produtor</a>
+        <a href="/" class="btn btn-secondary">← Painel de saldos</a>
+        <a href="/historico" class="btn btn-secondary">Histórico</a>
+        <a href="/evolucao" class="btn btn-secondary">Evolução</a>
         <a href="/transacoes" class="btn btn-secondary">Transações</a>
-        <a href="/meta" class="btn btn-secondary">Meta</a>
         <a href="/produtores" class="btn btn-secondary">Produtores</a>
         <a href="/financeiro" class="btn btn-secondary">Financeiro</a>
-        <a href="/log" class="btn btn-secondary">Log da exportação</a>
+        <a href="/log" class="btn btn-secondary">Log</a>
         <a href="/api/exportar?formato=xlsx" class="btn btn-primary" download>Exportar XLSX</a>
         <a href="/api/exportar?formato=csv" class="btn btn-secondary" download>Exportar CSV</a>
       </div>
@@ -167,17 +179,14 @@
             <tr>
               <th data-col="Nome" data-type="text">Nome <span class="sort-icon">↕</span></th>
               <th data-col="Email" data-type="text">Email <span class="sort-icon">↕</span></th>
-              <th data-col="Saldo pendente" data-type="num" class="num">Saldo pendente <span class="sort-icon">↕</span></th>
-              <th data-col="Saldo retido" data-type="num" class="num">Saldo retido <span class="sort-icon">↕</span></th>
-              <th data-col="Saldo disponível" data-type="num" class="num">Saldo disponível <span class="sort-icon">↕</span></th>
-              <th data-col="Total sacado" data-type="num" class="num">Total sacado <span class="sort-icon">↕</span></th>
+              <th data-col="tag" data-type="text">Tag (status) <span class="sort-icon">↕</span></th>
               <th data-col="Vendas líquidas" data-type="num" class="num">Vendas líquidas <span class="sort-icon">↕</span></th>
-              <th data-col="Indicação" data-type="num" class="num">Indicação <span class="sort-icon">↕</span></th>
-              <th data-col="Outros" data-type="num" class="num">Outros <span class="sort-icon">↕</span></th>
+              <th class="num">Meta</th>
+              <th data-col="_pct" data-type="num" class="num">% meta <span class="sort-icon">↕</span></th>
             </tr>
           </thead>
           <tbody id="tbody">
-            <tr><td colspan="9" class="empty">Carregando…</td></tr>
+            <tr><td colspan="6" class="empty">Carregando…</td></tr>
           </tbody>
         </table>
       </div>
@@ -187,32 +196,80 @@
     var dadosAtuais = [];
     var sortCol = null;
     var sortAsc = true;
+    var META_VALOR = 10000;
+    var TAG_OPCOES = ['', 'Ativo', 'Inativo', 'Novo', 'Em follow-up', 'Top', 'Fora'];
+    var STORAGE_KEY = 'applyfy_meta_tags';
+
     function fmtMoney(v) {
       if (v == null || v === '' || isNaN(Number(v))) return '–';
       return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v));
     }
-    var cols = ['Nome','Email','Saldo pendente','Saldo retido','Saldo disponível','Total sacado','Vendas líquidas','Indicação','Outros'];
+    function getTags() {
+      try {
+        var s = localStorage.getItem(STORAGE_KEY);
+        return s ? JSON.parse(s) : {};
+      } catch (e) { return {}; }
+    }
+    function getTag(email) {
+      return (getTags()[String(email).trim()] || '').trim();
+    }
+    function setTag(email, tag) {
+      var o = getTags();
+      email = String(email).trim();
+      if (tag) o[email] = tag; else delete o[email];
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(o)); } catch (e) {}
+    }
+    function esc(s) {
+      if (s == null) return '';
+      return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+    function tagSelectHtml(email, currentTag) {
+      var opts = TAG_OPCOES.map(function(opt) {
+        var label = opt || '–';
+        var sel = (currentTag === opt) ? ' selected' : '';
+        return '<option value="' + esc(opt) + '"' + sel + '>' + esc(label) + '</option>';
+      }).join('');
+      return '<select class="tag-select" data-email="' + esc(email) + '" title="Status do produtor">' + opts + '</select>';
+    }
+    function pctClass(pct) {
+      if (pct >= 100) return 'pct-ok';
+      if (pct >= 50) return 'pct-warn';
+      return 'pct-low';
+    }
     function rowToHtml(row) {
-      return '<tr>' + cols.map(function(c) {
-        var val = row[c];
-        var isNum = c !== 'Nome' && c !== 'Email';
-        return '<td class="' + (isNum ? 'num' : '') + '">' + (isNum ? fmtMoney(val) : (val || '–')) + '</td>';
-      }).join('') + '</tr>';
+      var vl = Number(row['Vendas líquidas']) || 0;
+      var pct = META_VALOR > 0 ? (vl / META_VALOR) * 100 : 0;
+      row._pct = pct;
+      row.tag = row.tag !== undefined ? row.tag : getTag(row.Email);
+      var pctStr = pct >= 100 ? '100%+' : (pct.toFixed(1).replace('.', ',') + '%');
+      return '<tr>' +
+        '<td>' + esc(row.Nome || '–') + '</td>' +
+        '<td>' + esc(row.Email || '–') + '</td>' +
+        '<td>' + tagSelectHtml(row.Email, row.tag) + '</td>' +
+        '<td class="num">' + fmtMoney(row['Vendas líquidas']) + '</td>' +
+        '<td class="num">' + fmtMoney(META_VALOR) + '</td>' +
+        '<td class="num ' + pctClass(pct) + '">' + pctStr + '</td>' +
+      '</tr>';
     }
     function renderTable(rows) {
       var tbody = document.getElementById('tbody');
-      tbody.innerHTML = rows.length ? rows.map(rowToHtml).join('') : '<tr><td colspan="9" class="empty">Nenhum dado.</td></tr>';
+      tbody.innerHTML = rows.length ? rows.map(rowToHtml).join('') : '<tr><td colspan="6" class="empty">Nenhum dado.</td></tr>';
     }
     function render(data) {
-      const lastRun = document.getElementById('lastRun');
+      var lastRun = document.getElementById('lastRun');
       if (!data.resultados || data.resultados.length === 0) {
         dadosAtuais = [];
         renderTable([]);
         lastRun.textContent = data.run_at ? 'Última atualização: ' + new Date(data.run_at).toLocaleString('pt-BR') : 'Nenhuma exportação ainda.';
         return;
       }
-      dadosAtuais = data.resultados;
-      lastRun.textContent = 'Última atualização: ' + (data.run_at ? new Date(data.run_at).toLocaleString('pt-BR') : '–') + ' · ' + data.total + ' produtores';
+      dadosAtuais = data.resultados.map(function(r) {
+        r.tag = getTag(r.Email);
+        var vl = Number(r['Vendas líquidas']) || 0;
+        r._pct = META_VALOR > 0 ? (vl / META_VALOR) * 100 : 0;
+        return r;
+      });
+      lastRun.textContent = 'Última atualização: ' + (data.run_at ? new Date(data.run_at).toLocaleString('pt-BR') : '–') + ' · ' + data.total + ' produtores · Meta: R$ 10.000';
       sortCol = null;
       sortAsc = true;
       document.querySelectorAll('th').forEach(function(th){ th.classList.remove('sorted'); });
@@ -223,8 +280,9 @@
       else { sortCol = col; sortAsc = true; }
       var mult = sortAsc ? 1 : -1;
       var sorted = dadosAtuais.slice().sort(function(a, b) {
-        var va = a[col], vb = b[col];
-        if (type === 'num') {
+        var va = col === 'tag' ? (a.tag || '') : (a[col] !== undefined ? a[col] : a[col]);
+        var vb = col === 'tag' ? (b.tag || '') : (b[col] !== undefined ? b[col] : b[col]);
+        if (type === 'num' || col === '_pct') {
           va = Number(va) || 0;
           vb = Number(vb) || 0;
           return mult * (va - vb);
@@ -244,14 +302,23 @@
       var th = e.target.closest('th[data-col]');
       if (th) sortData(th.getAttribute('data-col'), th.getAttribute('data-type') || 'text');
     });
+    document.getElementById('tbody').addEventListener('change', function(e) {
+      var sel = e.target.closest('select.tag-select');
+      if (!sel) return;
+      var email = sel.getAttribute('data-email');
+      var tag = (sel.value || '').trim();
+      setTag(email, tag);
+      for (var i = 0; i < dadosAtuais.length; i++) {
+        if (String(dadosAtuais[i].Email).trim() === email) { dadosAtuais[i].tag = tag; break; }
+      }
+    });
     fetch('/api/ultimo-relatorio')
       .then(function(r) { return r.json(); })
       .then(render)
       .catch(function() {
-        document.getElementById('tbody').innerHTML = '<tr><td colspan="9" class="empty">Erro ao carregar dados.</td></tr>';
+        document.getElementById('tbody').innerHTML = '<tr><td colspan="6" class="empty">Erro ao carregar dados.</td></tr>';
         document.getElementById('lastRun').textContent = 'Erro ao carregar.';
       });
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
   </script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 /* Service Worker Applyfy Painel - PWA installável */
-const CACHE = 'applyfy-v1';
+const CACHE = 'applyfy-v2';
 
 self.addEventListener('install', function(e) {
   self.skipWaiting();
@@ -14,7 +14,7 @@ self.addEventListener('activate', function(e) {
 });
 
 self.addEventListener('fetch', function(e) {
-  /* network-first: sempre tenta rede; fallback para cache só em falha */
+  if (e.request.mode === 'navigate') return;
   if (e.request.url.match(/\/api\//)) return;
   e.respondWith(
     fetch(e.request).catch(function() {

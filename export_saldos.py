@@ -4,6 +4,8 @@ Lógica de exportação de saldos dos produtores Applyfy.
 Usa sessao_applyfy.json em config.DATA_DIR.
 Retorna lista de dicts e grava CSV/XLSX em config.
 """
+import json
+import os
 import time
 from datetime import datetime
 
@@ -19,9 +21,9 @@ BASE_URL = "https://app.applyfy.com.br"
 PAGE_SIZE = 20
 ESPERA_CARREGAR_LISTA = 10  # segundos após clicar (site pode demorar)
 ESPERA_PROXIMA_DISPONIVEL = 7
-NAV_TIMEOUT = 120000
-SEL_TIMEOUT = 90000   # 90s para seletores (página pode demorar)
-CLICK_TIMEOUT = 60000 # 60s para cliques (tela de saldo pode ser lenta)
+NAV_TIMEOUT = 180000
+SEL_TIMEOUT = 120000   # 90s para seletores (página pode demorar)
+CLICK_TIMEOUT = 120000 # 60s para cliques (tela de saldo pode ser lenta)
 
 
 def _log_txt(msg: str):
@@ -118,14 +120,71 @@ def _clicar_proxima(page, nome_antes: str) -> bool:
 get_primeiro_nome_da_lista = _get_primeiro_nome_da_lista
 
 
+def _load_checkpoint():
+    """
+    Retorna (run_at, pagina, linha) se checkpoint válido para hoje; senão (None, 1, 0).
+    linha é 0-based, próxima a processar.
+    """
+    path = getattr(config, "EXPORT_CHECKPOINT", None)
+    if not path or not os.path.isfile(path):
+        return None, 1, 0
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        run_at_str = data.get("run_at")
+        pagina = int(data.get("pagina", 1))
+        linha = int(data.get("linha", 0))
+        if not run_at_str:
+            return None, 1, 0
+        run_at = datetime.fromisoformat(run_at_str.replace("Z", "+00:00"))
+        if run_at.tzinfo:
+            run_at = run_at.replace(tzinfo=None)
+        today = datetime.now().date()
+        if run_at.date() != today:
+            return None, 1, 0
+        return run_at, pagina, linha
+    except Exception:
+        return None, 1, 0
+
+
+def _save_checkpoint(run_at, pagina, linha):
+    """Persiste checkpoint: próxima posição a processar (pagina 1-based, linha 0-based)."""
+    path = getattr(config, "EXPORT_CHECKPOINT", None)
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump({"run_at": run_at.isoformat(), "pagina": pagina, "linha": linha}, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _clear_checkpoint():
+    """Remove o arquivo de checkpoint (exportação concluída)."""
+    path = getattr(config, "EXPORT_CHECKPOINT", None)
+    if path and os.path.isfile(path):
+        try:
+            os.remove(path)
+        except Exception:
+            pass
+
+
 def run_export(session_path=None, save_to_disk=True):
     """
     Executa a exportação. session_path default: config.SESSION_FILE.
     Retorna (resultados: list[dict], log_rows: list[dict], run_at: datetime).
     Alimenta o Postgres a cada produtor processado (run_at fixo no início).
+    Se existir checkpoint do mesmo dia, retoma de (pagina, linha).
     """
     session_path = session_path or config.SESSION_FILE
-    run_at = datetime.now()
+    cp_run_at, start_pagina, start_linha = _load_checkpoint()
+    today = datetime.now().date()
+    if cp_run_at is not None and cp_run_at.date() == today:
+        run_at = cp_run_at
+        _log_txt(f"▶ Retomando exportação de página {start_pagina}, linha {start_linha + 1} (run_at={run_at.isoformat()})")
+    else:
+        run_at = datetime.now()
+        start_pagina, start_linha = 1, 0
     resultados = []
     log_rows = []
     ok_count = timeout_count = erro_count = 0
@@ -144,7 +203,7 @@ def run_export(session_path=None, save_to_disk=True):
         page.set_default_timeout(SEL_TIMEOUT)
         page.set_default_navigation_timeout(NAV_TIMEOUT)
 
-        pagina = 1
+        pagina = start_pagina
         inicio_geral = time.perf_counter()
         _log_txt("INÍCIO da exportação Applyfy")
         if db.DATABASE_URL:
@@ -165,15 +224,18 @@ def run_export(session_path=None, save_to_disk=True):
 
                 if total_linhas == 0:
                     _log_txt("ℹ Nenhuma linha na tabela. Encerrando.")
+                    _clear_checkpoint()
                     break
 
-                for i in range(total_linhas):
+                first_row = start_linha if pagina == start_pagina else 0
+                for i in range(first_row, total_linhas):
                     row = page.locator("table tbody tr").nth(i)
                     produtor_inicio = time.perf_counter()
                     nome = ""
                     email = ""
 
                     try:
+                        etapa = "lista"
                         cell_text = row.locator("td").first.inner_text(timeout=SEL_TIMEOUT)
                         lines = [l.strip() for l in cell_text.split("\n") if l.strip()]
                         if not lines:
@@ -181,14 +243,21 @@ def run_export(session_path=None, save_to_disk=True):
                         nome = lines[0]
                         email = lines[1] if len(lines) > 1 else ""
 
+                        t_abrir = t_saldo = t_cards = 0.0
+                        _t0 = time.perf_counter()
+
                         row.locator("button").last.click(timeout=CLICK_TIMEOUT)
                         page.wait_for_load_state("domcontentloaded")
                         time.sleep(ESPERA_CARREGAR_LISTA)
+                        t_abrir = round(time.perf_counter() - _t0, 1)
 
+                        etapa = "saldo"
                         page.locator("text=Saldo").first.click(timeout=CLICK_TIMEOUT)
                         page.wait_for_load_state("domcontentloaded")
                         time.sleep(ESPERA_CARREGAR_LISTA)
+                        t_saldo = round(time.perf_counter() - _t0 - t_abrir, 1)
 
+                        etapa = "cards"
                         data = {
                             "Nome": nome,
                             "Email": email,
@@ -200,12 +269,13 @@ def run_export(session_path=None, save_to_disk=True):
                             "Indicação": _get_total_from_card(page, "Indicação"),
                             "Outros": _get_total_from_card(page, "Outros"),
                         }
+                        t_cards = round(time.perf_counter() - _t0 - t_abrir - t_saldo, 1)
                         resultados.append(data)
                         ok_count += 1
                         if db.DATABASE_URL:
                             db.insert_saldo_row(run_at, data)
                         dur = round(time.perf_counter() - produtor_inicio, 2)
-                        _log_txt(f"✔ {nome} ({email}) | {dur}s | Página {pagina} | Linha {i+1}/{total_linhas}")
+                        _log_txt(f"✔ {nome} ({email}) | {dur}s | [latência] abrir:{t_abrir}s saldo:{t_saldo}s cards:{t_cards}s | Página {pagina} | Linha {i+1}/{total_linhas}")
                         log_rows.append({
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "pagina": pagina, "linha": i + 1, "nome": nome, "email": email,
@@ -214,11 +284,11 @@ def run_export(session_path=None, save_to_disk=True):
                     except PWTimeout:
                         timeout_count += 1
                         dur = round(time.perf_counter() - produtor_inicio, 2)
-                        _log_txt(f"⏱ TIMEOUT | {nome} ({email}) | {dur}s | Página {pagina} | Linha {i+1}/{total_linhas}")
+                        _log_txt(f"⏱ TIMEOUT | {nome} ({email}) | {dur}s | parou em: {etapa} | Página {pagina} | Linha {i+1}/{total_linhas}")
                         log_rows.append({
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "pagina": pagina, "linha": i + 1, "nome": nome, "email": email,
-                            "status": "TIMEOUT", "segundos": dur, "mensagem": "Timeout",
+                            "status": "TIMEOUT", "segundos": dur, "mensagem": f"Timeout (parou em: {etapa})",
                         })
                     except Exception as e:
                         erro_count += 1
@@ -230,6 +300,11 @@ def run_export(session_path=None, save_to_disk=True):
                             "pagina": pagina, "linha": i + 1, "nome": nome, "email": email,
                             "status": "ERRO", "segundos": dur, "mensagem": msg,
                         })
+
+                    next_linha = i + 1
+                    next_pagina = pagina if next_linha < total_linhas else pagina + 1
+                    next_linha = next_linha if next_linha < total_linhas else 0
+                    _save_checkpoint(run_at, next_pagina, next_linha)
 
                     if save_to_disk:
                         df = pd.DataFrame(resultados)
@@ -248,6 +323,7 @@ def run_export(session_path=None, save_to_disk=True):
                 ok = _clicar_proxima(page, nome_antes)
                 if not ok:
                     _log_txt("ℹ Botão Próxima indisponível (fim).")
+                    _clear_checkpoint()
                     break
                 pagina += 1
 

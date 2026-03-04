@@ -4,18 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#c9a227">
-  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Evolução por produtor | Applyfy</title>
   <link rel="manifest" href="/static/manifest.json">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
     :root { --bg: #0a0a0b; --bg-card: #121214; --border: #1e1e22; --text: #e4e4e7; --text-muted: #71717a; --accent: #c9a227; --radius: 8px; }
     * { box-sizing: border-box; }
-    body { margin: 0; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0b; color: #e4e4e7; min-height: 100vh; }
     .wrap { max-width: 1200px; margin: 0 auto; padding: 1rem; padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); padding-bottom: max(2rem, env(safe-area-inset-bottom)); }
     @media (max-width: 640px) { .wrap { padding: 0.75rem; } h1 { font-size: 1.25rem; } .filtro input, .filtro select { min-width: 100%; min-height: 44px; } .chart-container { height: 280px; } }
     h1 { font-size: 1.5rem; margin: 0 0 1rem 0; }
@@ -32,12 +28,18 @@
     .card h2 { font-size: 1rem; color: var(--text-muted); margin: 0 0 1rem 0; }
     .empty { padding: 3rem; text-align: center; color: var(--text-muted); }
     .chart-container { position: relative; height: 360px; }
-  </style>
+    .text-muted { color: var(--text-muted); font-size: 0.95rem; }
+    code { background: var(--bg); padding: 0.2em 0.4em; border-radius: 4px; font-size: 0.85em; }
+    .btn { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--accent); background: var(--accent); color: var(--bg); font-family: inherit; font-size: 1rem; cursor: pointer; min-height: 44px; }
+    .btn:hover { opacity: 0.9; }
+    #producerId { min-width: 200px; }
 </head>
-<body>
-  <div class="wrap">
-    <nav class="nav"><a href="/">← Painel</a> <a href="/historico">Histórico por data</a></nav>
-    <h1>Evolução dos saldos por produtor</h1>
+<body style="background:#0a0a0b;color:#e4e4e7;margin:0;min-height:100vh;">
+  <div style="background:#c9a227;color:#0a0a0b;padding:8px 1rem;font-weight:600;text-align:center;">Evolução por produtor — ApplyFy</div>
+  <div class="wrap" style="max-width:1200px;margin:0 auto;padding:1rem;">
+    <nav class="nav" style="margin-bottom:1.5rem;"><a href="/" style="color:#c9a227;text-decoration:none;">← Painel</a> <a href="/historico" style="color:#c9a227;text-decoration:none;">Histórico por data</a> <a href="/evolucao" style="color:#c9a227;text-decoration:none;">Evolução</a> <a href="/transacoes" style="color:#c9a227;text-decoration:none;">Transações</a> <a href="/meta" style="color:#c9a227;text-decoration:none;">Meta</a> <a href="/produtores" style="color:#c9a227;text-decoration:none;">Produtores</a> <a href="/financeiro" style="color:#c9a227;text-decoration:none;">Financeiro</a> <a href="/log" style="color:#c9a227;text-decoration:none;">Log</a></nav>
+    <h1 style="font-size:1.5rem;margin:0 0 1rem 0;">Evolução dos saldos por produtor</h1>
+    <p class="text-muted" style="margin:0 0 1rem 0;">Os dados de evolução vêm do histórico no Postgres. As <strong>taxas do produtor</strong> vêm da API ApplyFy: <code>GET https://app.applyfy.com.br/api/v1/gateway/admin/producer/<span id="apiIdPlaceholder">{id}</span></code> — use o ID do produtor na URL.</p>
     <div class="filtro">
       <div class="filtro-row">
         <label for="busca">Filtrar por nome ou email:</label>
@@ -67,9 +69,23 @@
       <h2 id="tituloChart">Evolução ao longo do tempo</h2>
       <div class="chart-container"><canvas id="chart"></canvas></div>
     </div>
-    <div class="empty" id="empty">Selecione um produtor para ver a evolução gráfica.</div>
+    <div class="card" id="cardTaxas" style="display: none;">
+      <h2>Taxas do produtor (API ApplyFy)</h2>
+      <p class="text-muted" style="margin:0 0 0.75rem 0;">API: <code>GET /api/v1/gateway/admin/producer/<span id="apiIdExample">ID</span></code> — o painel chama <code>GET /api/produtor/<span id="apiIdExample2">ID</span>/taxas</code> (com <code>?refresh=1</code> para atualizar da ApplyFy).</p>
+      <div class="filtro-row" style="margin-bottom: 0.75rem;">
+        <label for="producerId">ID do produtor (obrigatório para buscar na API):</label>
+        <input type="text" id="producerId" placeholder="Ex.: oe2kuk5s2i (do webhook PRODUCER_CREATED ou painel ApplyFy)">
+        <button type="button" id="btnBuscarTaxas" class="btn">Buscar taxas na API</button>
+      </div>
+      <p id="taxasMsg" class="empty" style="margin: 0; padding: 1rem 0;"></p>
+      <pre id="taxasJson" style="display: none; background: var(--bg); padding: 1rem; border-radius: var(--radius); overflow: auto; font-size: 0.85rem; max-height: 280px;"></pre>
+      <p id="taxasFetchedAt" style="font-size: 0.85rem; color: var(--text-muted); margin: 0.5rem 0 0 0;"></p>
+    </div>
+    <div class="empty" id="empty" style="padding:2rem;text-align:center;color:#71717a;">Selecione um produtor para ver a evolução gráfica.</div>
   </div>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
+    document.body.classList.add('loaded');
     var chartInstance = null;
     var listaProdutores = [];
     var dadosEvolucaoAtuais = [];
@@ -131,10 +147,14 @@
         var email = sel.value;
         if (!email) {
           document.getElementById('cardChart').style.display = 'none';
+          document.getElementById('cardTaxas').style.display = 'none';
           document.getElementById('empty').style.display = 'block';
           if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
           return;
         }
+        document.getElementById('cardTaxas').style.display = 'block';
+        document.getElementById('producerId').value = '';
+        carregarTaxasPorEmail(email);
         fetch('/api/evolucao?email=' + encodeURIComponent(email))
           .then(function(r){ return r.json(); })
           .then(function(res) {
@@ -156,6 +176,81 @@
           });
       });
     }).catch(function() { document.getElementById('produtor').innerHTML = '<option value="">Erro ao carregar produtores</option>'; });
+
+    function carregarTaxasPorEmail(email) {
+      var msg = document.getElementById('taxasMsg');
+      var pre = document.getElementById('taxasJson');
+      var fetchedAt = document.getElementById('taxasFetchedAt');
+      msg.style.display = 'block';
+      msg.textContent = 'Carregando cache de taxas…';
+      pre.style.display = 'none';
+      fetchedAt.textContent = '';
+      fetch('/api/produtor/taxas?email=' + encodeURIComponent(email))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.error) {
+            msg.textContent = data.error;
+            return;
+          }
+          if (!data.taxes_snapshot) {
+            msg.textContent = data.message || 'Nenhum cache de taxas para este email. Informe o ID do produtor e clique em "Buscar taxas na API" para buscar na ApplyFy.';
+            return;
+          }
+          msg.style.display = 'none';
+          pre.style.display = 'block';
+          pre.textContent = JSON.stringify(data.taxes_snapshot, null, 2);
+          fetchedAt.textContent = data.fetched_at ? 'Atualizado em: ' + data.fetched_at : '';
+        })
+        .catch(function() {
+          msg.textContent = 'Erro ao carregar taxas.';
+        });
+    }
+
+    function buscarTaxasPorId() {
+      var id = (document.getElementById('producerId').value || '').trim();
+      if (!id) {
+        document.getElementById('taxasMsg').textContent = 'Informe o ID do produtor.';
+        document.getElementById('taxasMsg').style.display = 'block';
+        return;
+      }
+      var msg = document.getElementById('taxasMsg');
+      var pre = document.getElementById('taxasJson');
+      var fetchedAt = document.getElementById('taxasFetchedAt');
+      msg.style.display = 'block';
+      msg.textContent = 'Buscando na API ApplyFy…';
+      pre.style.display = 'none';
+      fetchedAt.textContent = '';
+      fetch('/api/produtor/' + encodeURIComponent(id) + '/taxas?refresh=1')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (data.error) {
+            msg.textContent = data.error;
+            return;
+          }
+          if (!data.taxes_snapshot) {
+            msg.textContent = 'Nenhuma taxa retornada pela API.';
+            return;
+          }
+          msg.style.display = 'none';
+          pre.style.display = 'block';
+          pre.textContent = JSON.stringify(data.taxes_snapshot, null, 2);
+          fetchedAt.textContent = data.fetched_at ? 'Atualizado em: ' + data.fetched_at : '';
+        })
+        .catch(function() {
+          msg.textContent = 'Erro ao buscar taxas na API.';
+        });
+    }
+
+    document.getElementById('btnBuscarTaxas').addEventListener('click', buscarTaxasPorId);
+
+    document.getElementById('producerId').addEventListener('input', function() {
+      var id = (this.value || 'ID').trim() || 'ID';
+      var el1 = document.getElementById('apiIdExample');
+      var el2 = document.getElementById('apiIdExample2');
+      if (el1) el1.textContent = id;
+      if (el2) el2.textContent = id;
+    });
+
     if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
   </script>
 </body>

@@ -32,6 +32,20 @@ cp .env.example .env
 # Edite .env com: APPLYFY_USER, APPLYFY_PASSWORD, APPLYFY_TOTP_SECRET
 ```
 
+**API Admin e Webhooks (opcional):** para receber vendas/transações em tempo real e consultar taxas dos produtores:
+
+- No painel ApplyFy, em Integrações/API, obtenha as chaves e defina no `.env`:
+  - `APPLYFY_PUBLIC_KEY`
+  - `APPLYFY_SECRET_KEY`
+- Em Integrações > Webhooks, cadastre a URL do webhook e use o mesmo valor no `.env`:
+  - `APPLYFY_WEBHOOK_TOKEN=...`
+
+**URL do webhook** (HTTPS obrigatório):
+
+- `https://applyfy.northempresarial.com/api/webhooks/applyfy`
+
+O Nginx deve permitir POST nessa rota; certificado SSL deve estar ativo.
+
 Para o cron, crie um script que carrega o `.env` antes de rodar, por exemplo `env.sh`:
 
 ```bash
@@ -134,6 +148,8 @@ Adicione (ajuste o path do `env.sh` se necessário):
 ```
 0 2 * * * cd /var/www/applyfy && . env.sh && /var/www/applyfy/venv/bin/python run_daily.py >> /var/www/applyfy/data/cron.log 2>&1
 ```
+
+**Retry e checkpoint:** Se a exportação cair (timeout, falha de rede, etc.), o job é reiniciado automaticamente (até 10 tentativas, 45 s entre cada). O progresso é salvo em `data/export_checkpoint.json`; ao retomar, a exportação continua de onde parou em vez de recomeçar a lista. Para forçar recomeço do zero: `rm -f /var/www/applyfy/data/export_checkpoint.json`.
 
 ## 9. O que mais pode precisar
 
