@@ -60,20 +60,31 @@ export APPLYFY_DATA_DIR=/var/www/applyfy/data
 
 ```bash
 mkdir -p /var/www/applyfy/data
-# Permissões: o usuário que roda o app e o cron deve poder escrever
-chown -R www-data:www-data /var/www/applyfy/data   # se rodar como www-data
+# Se você roda o cron como www-data mas salva sessão manualmente como tactical:
+sudo chown -R tactical:www-data /var/www/applyfy/data
+sudo chmod -R 775 /var/www/applyfy/data
+sudo chmod g+s /var/www/applyfy/data
+# Novos arquivos herdam o grupo www-data; tactical e www-data podem ler/escrever.
+# Alternativa: só um usuário usa (ex. tudo como www-data):
+# sudo chown -R www-data:www-data /var/www/applyfy/data
 ```
 
 ## 5. PostgreSQL (opcional)
 
-Se quiser que o último relatório seja lido do banco:
+Se quiser que o último relatório seja lido do banco, use o script que cria usuário, banco e reinicia o painel:
+
+```bash
+sudo bash /var/www/applyfy/scripts/recriar_banco_postgres.sh
+```
+
+Ou manualmente:
 
 ```bash
 sudo -u postgres createuser -P applyfy
 sudo -u postgres createdb -O applyfy applyfy
 ```
 
-No `.env`:
+No `.env` (sem espaço antes do nome da variável):
 
 ```
 DATABASE_URL=postgresql://applyfy:SUA_SENHA@localhost:5432/applyfy
@@ -149,10 +160,21 @@ Adicione (ajuste o path do `env.sh` se necessário):
 0 2 * * * cd /var/www/applyfy && . env.sh && /var/www/applyfy/venv/bin/python run_daily.py >> /var/www/applyfy/data/cron.log 2>&1
 ```
 
-**Retry e checkpoint:** Se a exportação cair (timeout, falha de rede, etc.), o job é reiniciado automaticamente (até 10 tentativas, 45 s entre cada). O progresso é salvo em `data/export_checkpoint.json`; ao retomar, a exportação continua de onde parou em vez de recomeçar a lista. Para forçar recomeço do zero: `rm -f /var/www/applyfy/data/export_checkpoint.json`.
+**Retry e checkpoint:** O job roda em loop até concluir ou atingir 6 h (`MAX_RUN_HOURS`). O progresso é salvo em `data/export_checkpoint.json`; ao retomar, a exportação continua de onde parou. Para forçar recomeço do zero: `rm -f /var/www/applyfy/data/export_checkpoint.json`.
 
-## 9. O que mais pode precisar
+## 9. Restauração (pós-clone ou após perda da pasta)
 
-- **Primeira sessão:** na primeira vez, o login automático pode falhar se os selectors da página de login da Applyfy forem diferentes. Rode com `HEADLESS=0` para ver o browser: `HEADLESS=0 python 01_salvar_sessao.py` e ajuste os seletores em `01_salvar_sessao.py` se necessário.
+Se o projeto foi clonado de novo ou a pasta foi restaurada do GitHub:
+
+1. **Recriar `.env`** (não versionado): `cp .env.example .env` e preencher `APPLYFY_USER`, `APPLYFY_PASSWORD`, `APPLYFY_TOTP_SECRET` e, se usar Postgres, `DATABASE_URL` (ou `PG_*`).
+2. **Diretório de dados:** `mkdir -p /var/www/applyfy/data` e ajustar dono se necessário (ex.: `chown -R www-data:www-data /var/www/applyfy/data`).
+3. **Venv e dependências:** `python3 -m venv venv`, `source venv/bin/activate`, `pip install -r requirements.txt`, `playwright install chromium`.
+4. **Serviço do painel:** usar o unit em `applyfy-painel.service` com `WorkingDirectory=/var/www/applyfy` e `EnvironmentFile=/var/www/applyfy/.env`; depois `sudo systemctl daemon-reload && sudo systemctl restart applyfy-painel`.
+5. **Cron:** garantir que o cron do job use o mesmo `.env` (ex.: `source /var/www/applyfy/env.sh` ou `EnvironmentFile`).
+6. **Primeira sessão:** rodar uma vez o login/sessão (ex.: `python 01_salvar_sessao.py`) para gerar `data/sessao_applyfy.json`.
+
+## 10. O que mais pode precisar
+
+- **Primeira sessão:** na primeira vez, o login automático pode falhar se os seletores da página de login da Applyfy forem diferentes. Rode com `HEADLESS=0` para ver o browser: `HEADLESS=0 python 01_salvar_sessao.py` e ajuste os seletores em `01_salvar_sessao.py` se necessário.
 - **Firewall:** libere 80 e 443 para o Nginx.
 - **Troca de senha/2FA:** após testar, troque a senha e regenere o 2FA na Applyfy (as credenciais foram usadas no chat).

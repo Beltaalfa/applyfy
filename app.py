@@ -21,14 +21,37 @@ app.config["JSON_AS_ASCII"] = False
 
 
 def _get_ultimo_dados():
-    """Último relatório: primeiro do Postgres, senão do CSV em data/."""
+    """Último relatório: primeiro export_runs (rápido), depois saldos_historico só se mais recente ou vazio, depois CSV."""
     try:
-        run_at, resultados = db.get_last_export_data()
+        run_at_export, resultados = db.get_last_export_data()
+        run_at = run_at_export
+        if resultados and db.DATABASE_URL:
+            datas = db.get_datas_disponiveis()
+            if datas:
+                latest_hist = datas[0][0]
+                try:
+                    if latest_hist and (run_at is None or latest_hist > run_at):
+                        res_hist = db.get_relatorio_por_data(latest_hist)
+                        if res_hist:
+                            run_at, resultados = latest_hist, res_hist
+                except (TypeError, ValueError):
+                    pass
+        if resultados:
+            run_at_str = run_at.isoformat() if hasattr(run_at, "isoformat") else str(run_at)
+            return resultados, run_at_str
     except Exception:
         resultados, run_at = [], None
-    if resultados:
-        run_at_str = run_at.isoformat() if hasattr(run_at, "isoformat") else str(run_at)
-        return resultados, run_at_str
+    if not resultados and db.DATABASE_URL:
+        try:
+            datas = db.get_datas_disponiveis()
+            if datas:
+                run_at = datas[0][0]
+                resultados = db.get_relatorio_por_data(run_at)
+                if resultados:
+                    run_at_str = run_at.isoformat() if hasattr(run_at, "isoformat") else str(run_at)
+                    return resultados, run_at_str
+        except Exception:
+            pass
     csv_path = config.OUT_CSV
     if os.path.isfile(csv_path):
         df = pd.read_csv(csv_path, sep=";", encoding="utf-8-sig")
@@ -51,6 +74,35 @@ def api_ultimo_relatorio():
 @app.route("/api/exportar")
 def api_exportar():
     fmt = (request.args.get("formato") or "csv").lower()
+    run_at_str = request.args.get("run_at")
+    if run_at_str and db.DATABASE_URL:
+        try:
+            resultados = db.get_relatorio_por_data(run_at_str)
+            if not resultados:
+                return jsonify({"error": "Nenhum dado para esta data."}), 404
+            df = pd.DataFrame(resultados)
+            from io import BytesIO
+            if fmt == "xlsx":
+                buf = BytesIO()
+                df.to_excel(buf, index=False)
+                buf.seek(0)
+                return send_file(
+                    buf,
+                    mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    as_attachment=True,
+                    download_name="historico_saldos.xlsx",
+                )
+            buf = BytesIO()
+            buf.write(df.to_csv(sep=";", index=False, encoding="utf-8-sig").encode("utf-8-sig"))
+            buf.seek(0)
+            return send_file(
+                buf,
+                mimetype="text/csv; charset=utf-8",
+                as_attachment=True,
+                download_name="historico_saldos.csv",
+            )
+        except Exception as e:
+            return jsonify({"error": str(e)[:200]}), 500
     if fmt == "xlsx":
         path = config.OUT_XLSX
         mimetype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

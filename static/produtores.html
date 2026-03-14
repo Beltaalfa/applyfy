@@ -27,6 +27,7 @@
     th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
     th { font-weight: 600; color: var(--text-muted); white-space: nowrap; }
     .empty { padding: 3rem; text-align: center; color: var(--text-muted); }
+    .text-muted { color: var(--text-muted); font-size: 0.85rem; }
     .btn-api { padding: 0.4rem 0.75rem; border-radius: 6px; border: 1px solid var(--accent); background: transparent; color: var(--accent); cursor: pointer; font-size: 0.8rem; }
     .btn-api:hover { background: var(--accent); color: #0a0a0b; }
     .btn-api.loading { opacity: 0.7; pointer-events: none; }
@@ -69,14 +70,18 @@
         var list = data.produtores || [];
         document.getElementById('msgTotal').textContent = 'Total: ' + (data.total || list.length) + ' produtores. Clique em "Buscar na API" para ver os dados completos (nome, email, taxas, etc.) da ApplyFy. Se aparecer 403, webhook e API precisam usar a mesma conta ApplyFy.';
         if (!list.length) {
-          tbody.innerHTML = '<tr><td colspan="4" class="empty">Nenhum produtor ainda. Os produtores aparecem aqui quando o webhook recebe PRODUCER_CREATED ou quando você sincroniza offer codes em Transações.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="4" class="empty">Nenhum produtor ainda. Rode a exportação de saldos (cron/run_daily) com sucesso ou configure o webhook ApplyFy para receber PRODUCER_CREATED. Os produtores do histórico de exportação também aparecem aqui.</td></tr>';
           return;
         }
         tbody.innerHTML = list.map(function(p) {
           var id = (p.producer_id || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
           var name = (p.producer_name || '–').replace(/</g, '&lt;').replace(/"/g, '&quot;');
           var codes = (p.offer_codes || []).length ? p.offer_codes.join(', ') : '–';
-          return '<tr><td><code>' + id + '</code></td><td>' + name + '</td><td>' + codes + '</td><td><button type="button" class="btn-api" data-id="' + id + '">Buscar na API</button></td></tr>';
+          var isEmail = id.indexOf('@') !== -1;
+          var btn = isEmail
+            ? '<span class="text-muted" title="Produtor do histórico de exportação; Buscar na API usa ID numérico">–</span>'
+            : '<button type="button" class="btn-api" data-id="' + id + '">Buscar na API</button>';
+          return '<tr><td><code>' + id + '</code></td><td>' + name + '</td><td>' + codes + '</td><td>' + btn + '</td></tr>';
         }).join('');
         tbody.querySelectorAll('.btn-api').forEach(function(btn) {
           btn.addEventListener('click', function() {

@@ -23,7 +23,7 @@ ESPERA_CARREGAR_LISTA = 10  # segundos após clicar (site pode demorar)
 ESPERA_PROXIMA_DISPONIVEL = 7
 NAV_TIMEOUT = 180000
 SEL_TIMEOUT = 120000   # 90s para seletores (página pode demorar)
-CLICK_TIMEOUT = 120000 # 60s para cliques (tela de saldo pode ser lenta)
+CLICK_TIMEOUT = 120000  # 60s para cliques (tela de saldo pode ser lenta)
 
 
 def _log_txt(msg: str):
@@ -55,15 +55,41 @@ def _get_total_from_card(page, title: str) -> float:
         return 0.0
 
 
+LIST_WAIT = 120000   # 120s para aparecer table OU [role=row] (um único wait longo para API lenta)
+ROWS_WAIT = 90000   # 90s para linhas (depois segue com 0 linhas se timeout)
+
 def _wait_lista(page):
-    page.wait_for_selector("table tbody tr", timeout=SEL_TIMEOUT)
-    time.sleep(ESPERA_CARREGAR_LISTA)
-
-
-def _get_primeiro_nome_da_lista(page) -> str:
+    """Espera a lista carregar. Aceita <table> ou grid com [role=row]. Retorna seletor de linhas."""
     try:
-        row0 = page.locator("table tbody tr").first
-        cell_text = row0.locator("td").first.inner_text(timeout=SEL_TIMEOUT)
+        page.wait_for_selector("table, [role=row]", timeout=LIST_WAIT)
+    except PWTimeout:
+        try:
+            page.screenshot(path=os.path.join(config.DATA_DIR, "debug_producers_fail.png"))
+            with open(os.path.join(config.DATA_DIR, "debug_producers_fail.html"), "w", encoding="utf-8") as f:
+                f.write(page.content())
+        except Exception:
+            pass
+        raise
+    time.sleep(ESPERA_CARREGAR_LISTA)
+    if page.locator("table").count() > 0:
+        try:
+            page.wait_for_selector("table tbody tr", timeout=ROWS_WAIT)
+        except PWTimeout:
+            pass
+        return "table tbody tr"
+    return "[role=row]"
+
+
+def _cell_locator(row, row_selector: str):
+    """Locator da primeira célula da linha (td para table, role=cell para grid)."""
+    if row_selector == "table tbody tr":
+        return row.locator("td").first
+    return row.locator("[role=cell], [role=gridcell], td").first
+
+def _get_primeiro_nome_da_lista(page, row_selector: str = "table tbody tr") -> str:
+    try:
+        row0 = page.locator(row_selector).first
+        cell_text = _cell_locator(row0, row_selector).inner_text(timeout=SEL_TIMEOUT)
         lines = [l.strip() for l in cell_text.split("\n") if l.strip()]
         return lines[0] if lines else ""
     except Exception:
@@ -88,7 +114,7 @@ def _goto_with_retry(page, url, max_retries=3):
         raise last_err
 
 
-def _clicar_proxima(page, nome_antes: str) -> bool:
+def _clicar_proxima(page, nome_antes: str, row_selector: str = "table tbody tr") -> bool:
     time.sleep(ESPERA_PROXIMA_DISPONIVEL)
     next_btn = page.get_by_role("button", name="Próxima")
     if next_btn.count() == 0:
@@ -109,7 +135,7 @@ def _clicar_proxima(page, nome_antes: str) -> bool:
     for _ in range(40):
         time.sleep(0.5)
         try:
-            if get_primeiro_nome_da_lista(page) != nome_antes:
+            if _get_primeiro_nome_da_lista(page, row_selector) != nome_antes:
                 return True
         except Exception:
             pass
@@ -190,9 +216,10 @@ def run_export(session_path=None, save_to_disk=True):
     ok_count = timeout_count = erro_count = 0
 
     _log_txt("Abrindo browser para exportação (aguarde ~30s)...")
+    headed = os.environ.get("APPLYFY_HEADED", "").strip().lower() in ("1", "true", "yes")
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=True,
+            headless=not headed,
             args=["--disable-application-cache", "--disable-cache", "--disk-cache-size=0"],
         )
         context = browser.new_context(
@@ -215,11 +242,17 @@ def run_export(session_path=None, save_to_disk=True):
             while True:
                 lista_url = f"{BASE_URL}/admin/producers?page={pagina}&pageSize={PAGE_SIZE}"
                 _log_txt(f"📄 Abrindo página {pagina}: {lista_url}")
-
                 _goto_with_retry(page, lista_url)
-                _wait_lista(page)
-                nome_antes = _get_primeiro_nome_da_lista(page)
-                rows = page.locator("table tbody tr")
+                try:
+                    page.wait_for_load_state("networkidle", timeout=60000)
+                except Exception:
+                    pass
+                try:
+                    row_selector = _wait_lista(page)
+                except Exception as wait_err:
+                    raise
+                nome_antes = _get_primeiro_nome_da_lista(page, row_selector)
+                rows = page.locator(row_selector)
                 total_linhas = rows.count()
 
                 if total_linhas == 0:
@@ -229,14 +262,14 @@ def run_export(session_path=None, save_to_disk=True):
 
                 first_row = start_linha if pagina == start_pagina else 0
                 for i in range(first_row, total_linhas):
-                    row = page.locator("table tbody tr").nth(i)
+                    row = page.locator(row_selector).nth(i)
                     produtor_inicio = time.perf_counter()
                     nome = ""
                     email = ""
 
                     try:
                         etapa = "lista"
-                        cell_text = row.locator("td").first.inner_text(timeout=SEL_TIMEOUT)
+                        cell_text = _cell_locator(row, row_selector).inner_text(timeout=SEL_TIMEOUT)
                         lines = [l.strip() for l in cell_text.split("\n") if l.strip()]
                         if not lines:
                             continue
@@ -314,13 +347,13 @@ def run_export(session_path=None, save_to_disk=True):
 
                     try:
                         _goto_with_retry(page, lista_url)
-                        _wait_lista(page)
+                        row_selector = _wait_lista(page)
                     except Exception as e:
                         _log_txt(f"❌ Falha ao voltar pra lista: {e}")
                         raise
                     time.sleep(0.5)
 
-                ok = _clicar_proxima(page, nome_antes)
+                ok = _clicar_proxima(page, nome_antes, row_selector)
                 if not ok:
                     _log_txt("ℹ Botão Próxima indisponível (fim).")
                     _clear_checkpoint()

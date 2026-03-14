@@ -24,6 +24,9 @@
     .filtro { margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
     .filtro label { color: var(--text-muted); }
     .filtro select { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 1rem; min-width: 220px; }
+    .filtro .btn { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--accent); background: var(--accent); color: #0a0a0b; font-weight: 600; text-decoration: none; font-size: 0.875rem; cursor: pointer; display: inline-flex; align-items: center; }
+    .filtro .btn:hover { opacity: 0.9; }
+    .filtro .btn:disabled, .filtro .btn.disabled { opacity: 0.5; pointer-events: none; }
     .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
@@ -46,6 +49,7 @@
       <select id="data">
         <option value="">Carregando…</option>
       </select>
+      <a href="#" id="btnExportarXlsx" class="btn disabled" download>Exportar XLSX</a>
     </div>
     <p class="empty" id="msgHistorico" style="margin-bottom:1rem;"></p>
     <div class="card">
@@ -123,7 +127,10 @@
       }
       sel.addEventListener('change', function() {
         var runAt = sel.value;
-        if (!runAt) { dadosAtuais = []; renderTable([]); return; }
+        var btnXlsx = document.getElementById('btnExportarXlsx');
+        if (!runAt) { dadosAtuais = []; renderTable([]); btnXlsx.classList.add('disabled'); btnXlsx.href = '#'; return; }
+        btnXlsx.classList.remove('disabled');
+        btnXlsx.href = '/api/exportar?formato=xlsx&run_at=' + encodeURIComponent(runAt);
         fetch('/api/relatorio?run_at=' + encodeURIComponent(runAt))
           .then(function(r){ return r.json(); })
           .then(function(data) {

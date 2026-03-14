@@ -538,7 +538,7 @@ def list_producer_created_events(limit=200):
 
 def list_webhook_producers(limit=500):
     """
-    Lista produtores únicos que aparecem no webhook (PRODUCER_CREATED e applyfy_offer_producer).
+    Lista produtores únicos: webhook (PRODUCER_CREATED) + applyfy_offer_producer + fallback saldos_historico.
     Retorna lista de dicts: { producer_id, producer_name, offer_codes[] }.
     """
     if not DATABASE_URL:
@@ -568,6 +568,20 @@ def list_webhook_producers(limit=500):
                 by_id[pid]["offer_codes"].append(code)
             if name and not by_id[pid]["producer_name"]:
                 by_id[pid]["producer_name"] = name
+        # Fallback: produtores do histórico de saldos (exportação) para não ficar vazio
+        cur.execute(
+            """
+            SELECT DISTINCT ON (email) email, nome FROM saldos_historico
+            ORDER BY email, run_at DESC;
+            """
+        )
+        for r in cur.fetchall():
+            email, nome = r[0], r[1]
+            if not email:
+                continue
+            key = "email:" + str(email)
+            if key not in by_id:
+                by_id[key] = {"producer_id": email, "producer_name": nome or email, "offer_codes": []}
     out = list(by_id.values())[: int(limit)]
     return sorted(out, key=lambda x: (x["producer_name"] or "").lower())
 
