@@ -27,6 +27,7 @@ import pyotp
 from playwright.sync_api import sync_playwright
 
 import config
+from export_saldos import PAGE_SIZE, _esta_em_2fa, preenche_e_submete_2fa_estilo_login
 
 config.ensure_data_dir()
 
@@ -39,10 +40,14 @@ TIMEOUT_MS = 30000
 def main():
     totp = pyotp.TOTP(APPLYFY_TOTP_SECRET.strip().replace(" ", ""))
     code_2fa = totp.now()
+    headless = HEADLESS
+    if not headless and not config.has_display_server():
+        print("Sem DISPLAY no servidor; forçando headless no login.", flush=True)
+        headless = True
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=HEADLESS,
+            headless=headless,
             args=["--disable-blink-features=AutomationControlled"],
         )
         context = browser.new_context(
@@ -87,24 +92,32 @@ def main():
 
             # Tenta vários jeitos de achar o campo do código 2FA
             code_filled = False
+            otp_sel = 'input[data-input-otp="true"], input[autocomplete="one-time-code"]'
+            try:
+                page.wait_for_selector(otp_sel, timeout=20000)
+                page.locator(otp_sel).first.fill(code_2fa)
+                code_filled = True
+            except Exception:
+                pass
             # 1) Por label ou placeholder (Playwright)
-            for label in ["Código", "Código de verificação", "Code", "Digite o código", "Token", "2FA"]:
-                try:
-                    inp = page.get_by_label(label, exact=False)
-                    if inp.count() > 0:
-                        inp.first.fill(code_2fa)
-                        code_filled = True
-                        break
-                except Exception:
-                    pass
-                try:
-                    inp = page.get_by_placeholder(label, exact=False)
-                    if inp.count() > 0:
-                        inp.first.fill(code_2fa)
-                        code_filled = True
-                        break
-                except Exception:
-                    pass
+            if not code_filled:
+                for label in ["Código", "Código de verificação", "Code", "Digite o código", "Token", "2FA"]:
+                    try:
+                        inp = page.get_by_label(label, exact=False)
+                        if inp.count() > 0:
+                            inp.first.fill(code_2fa)
+                            code_filled = True
+                            break
+                    except Exception:
+                        pass
+                    try:
+                        inp = page.get_by_placeholder(label, exact=False)
+                        if inp.count() > 0:
+                            inp.first.fill(code_2fa)
+                            code_filled = True
+                            break
+                    except Exception:
+                        pass
             if not code_filled:
                 # 2) Selectors clássicos
                 code_sel = 'input[name="code"], input[name="token"], input[placeholder*="código" i], input[type="text"][maxlength="6"], input[inputmode="numeric"], input[type="tel"][maxlength="6"]'
@@ -162,6 +175,45 @@ def main():
                 print("Aviso: ainda na página de auth. Verifique usuário/senha/TOTP e selectors da página.")
                 browser.close()
                 sys.exit(2)
+
+            # Export usa /admin/producers; o login só abria /admin/reports/producers — rotas diferentes.
+            # Sem visitar /admin/producers aqui, o Applyfy costuma pedir 2FA de novo no export.
+            producers_url = f"https://app.applyfy.com.br/admin/producers?page=1&pageSize={PAGE_SIZE}"
+            try:
+                page.goto(producers_url, wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(6000)
+            except Exception:
+                pass
+            if "auth" in page.url.lower():
+                print("Aviso: /admin/producers redirecionou para auth.")
+                _save_debug()
+                browser.close()
+                sys.exit(4)
+            if _esta_em_2fa(page):
+                print("2FA em /admin/producers; validando com o mesmo fluxo do login...", flush=True)
+                ok_2fa = False
+                for tentativa in range(2):
+                    codigo = totp.now()
+                    if preenche_e_submete_2fa_estilo_login(page, codigo, _submit_login):
+                        ok_2fa = True
+                        break
+                    page.wait_for_timeout(2000)
+                if not ok_2fa:
+                    print(
+                        "Aviso: 2FA automático em /admin/producers falhou. Voltando ao relatório e salvando sessão mesmo assim — "
+                        "rode o export (03 ou run_daily); ele tentará 2FA outra vez com o TOTP do .env.",
+                        flush=True,
+                    )
+                    try:
+                        page.goto(REPORT_URL, wait_until="domcontentloaded", timeout=60000)
+                        page.wait_for_timeout(4000)
+                    except Exception:
+                        pass
+                    if "auth" in page.url.lower():
+                        print("Sessão perdeu login ao voltar do 2FA. Veja login_debug.png")
+                        _save_debug()
+                        browser.close()
+                        sys.exit(4)
 
             context.storage_state(path=config.SESSION_FILE)
             print("OK! Sessão salva em", config.SESSION_FILE, flush=True)

@@ -6,10 +6,12 @@ Retorna lista de dicts e grava CSV/XLSX em config.
 """
 import json
 import os
+import re
 import time
 from datetime import datetime
 
 import pandas as pd
+import pyotp
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 import config
@@ -57,18 +59,207 @@ def _get_total_from_card(page, title: str) -> float:
 
 LIST_WAIT = 120000   # 120s para aparecer table OU [role=row] (um único wait longo para API lenta)
 ROWS_WAIT = 90000   # 90s para linhas (depois segue com 0 linhas se timeout)
+PRODUCERS_LIST_SELECTORS = "table, [role=grid], [role=row]"
+
+
+def _get_applyfy_login_env() -> tuple[str, str, str]:
+    user = (os.environ.get("APPLYFY_USER") or "").strip()
+    password = os.environ.get("APPLYFY_PASSWORD") or ""
+    totp_secret = (os.environ.get("APPLYFY_TOTP_SECRET") or "").strip().replace(" ", "")
+    if not all([user, password, totp_secret]):
+        raise RuntimeError("Defina APPLYFY_USER, APPLYFY_PASSWORD e APPLYFY_TOTP_SECRET para resolver 2FA no export.")
+    return user, password, totp_secret
+
+
+def _esta_em_2fa(page) -> bool:
+    try:
+        if page.get_by_text("Autenticação de 2 fatores", exact=False).count() > 0:
+            return True
+        if page.locator("[data-input-otp-container]").count() > 0:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _preencher_otp_data_input_otp(page, codigo: str) -> bool:
+    """
+    Campo input[data-input-otp] (HeroUI/React): .fill() coloca value no DOM mas muitas vezes
+    NÃO dispara onChange por dígito — a tela /admin/producers não tem botão enviar, só auto-submit
+    ao completar 6 dígitos com teclas reais.
+    """
+    codigo = (codigo or "").strip().replace(" ", "")[:6]
+    if len(codigo) != 6:
+        return False
+    sel = 'input[data-input-otp="true"]'
+    try:
+        if page.locator(sel).count() == 0:
+            return False
+        page.wait_for_selector(sel, state="visible", timeout=15000)
+        inp = page.locator(sel).first
+        inp.scroll_into_view_if_needed(timeout=5000)
+        inp.click(timeout=5000)
+        page.wait_for_timeout(200)
+        try:
+            inp.press("Control+a")
+        except Exception:
+            pass
+        inp.press("Backspace")
+        page.wait_for_timeout(100)
+        inp.press_sequentially(codigo, delay=120)
+        return True
+    except Exception:
+        return False
+
+
+def preenche_e_submete_2fa_estilo_login(page, codigo: str, submit_fn) -> bool:
+    """
+    Mesmo fluxo do 01_salvar_sessao após email/senha (OTP + Enter + botões).
+    submit_fn: chamado só se precisar re-disparar formulário (no export costuma ser no-op).
+    Retorna True se saiu da tela de 2FA.
+    """
+    otp_sel = 'input[data-input-otp="true"], input[autocomplete="one-time-code"]'
+    code_filled = False
+    # Primeiro: digitação real no componente input-otp (obrigatório em /admin/producers).
+    if _preencher_otp_data_input_otp(page, codigo):
+        code_filled = True
+    if not code_filled:
+        try:
+            page.wait_for_selector(otp_sel, timeout=15000)
+            page.locator(otp_sel).first.fill(codigo)
+            code_filled = True
+        except Exception:
+            pass
+    if not code_filled:
+        for label in ["Código", "Código de verificação", "Code", "Digite o código", "Token", "2FA"]:
+            try:
+                inp = page.get_by_label(label, exact=False)
+                if inp.count() > 0:
+                    inp.first.fill(codigo)
+                    code_filled = True
+                    break
+            except Exception:
+                pass
+            try:
+                inp = page.get_by_placeholder(label, exact=False)
+                if inp.count() > 0:
+                    inp.first.fill(codigo)
+                    code_filled = True
+                    break
+            except Exception:
+                pass
+    if not code_filled:
+        code_sel = 'input[name="code"], input[name="token"], input[placeholder*="código" i], input[type="text"][maxlength="6"], input[inputmode="numeric"], input[type="tel"][maxlength="6"]'
+        code_boxes = page.locator('input[maxlength="1"][type="text"], input[maxlength="1"][type="tel"], input[inputmode="numeric"][maxlength="1"]')
+        try:
+            page.wait_for_selector(code_sel, timeout=12000)
+            page.fill(code_sel, codigo)
+            code_filled = True
+        except Exception:
+            if code_boxes.count() >= 6:
+                for i, digit in enumerate(codigo[:6]):
+                    code_boxes.nth(i).fill(digit)
+                    page.wait_for_timeout(100)
+                code_filled = True
+    if not code_filled:
+        submit_fn()
+        page.wait_for_timeout(4000)
+        if _preencher_otp_data_input_otp(page, codigo):
+            code_filled = True
+        else:
+            try:
+                page.wait_for_selector(otp_sel, timeout=8000)
+                page.locator(otp_sel).first.fill(codigo)
+                code_filled = True
+            except Exception:
+                pass
+    if not code_filled:
+        return False
+
+    # input-otp pode submeter sozinho ao 6º dígito; dar tempo antes de Enter extra.
+    page.wait_for_timeout(2500)
+    page.keyboard.press("Enter")
+    page.wait_for_timeout(3000)
+    try:
+        page.locator(
+            'button[type="submit"], input[type="submit"], button:has-text("Confirmar"), button:has-text("Verificar"), button:has-text("Enviar"), button:has-text("Continuar"), button:has-text("Validar")'
+        ).first.click(timeout=8000)
+        page.wait_for_timeout(3000)
+    except Exception:
+        pass
+    if _esta_em_2fa(page):
+        page.wait_for_timeout(2000)
+        page.keyboard.press("Enter")
+        page.wait_for_timeout(5000)
+    try:
+        page.wait_for_load_state("networkidle", timeout=30000)
+    except Exception:
+        pass
+    page.wait_for_timeout(2000)
+    if not _esta_em_2fa(page):
+        return True
+    if page.locator(PRODUCERS_LIST_SELECTORS).count() > 0:
+        return True
+    return False
+
+
+def _resolver_2fa_painel(page) -> bool:
+    """2FA em rota admin (ex.: /admin/producers) — usa o mesmo fluxo simples do login."""
+    try:
+        _get_applyfy_login_env()
+    except Exception:
+        return False
+
+    totp = pyotp.TOTP((os.environ.get("APPLYFY_TOTP_SECRET") or "").strip().replace(" ", ""))
+    otp_code = totp.now()
+
+    _log_txt("2FA no painel; tentando validar automaticamente (TOTP, fluxo igual ao login)...")
+
+    def _submit_vazio():
+        try:
+            page.locator("form button[type='submit'], form input[type='submit']").first.click(timeout=3000)
+        except Exception:
+            try:
+                page.get_by_role("button", name=re.compile(r"^Entrar$")).first.click(timeout=3000)
+            except Exception:
+                pass
+
+    return preenche_e_submete_2fa_estilo_login(page, otp_code, _submit_vazio)
+
+
+def _debug_producers_fail(page):
+    p = os.path.join(config.DATA_DIR, "debug_producers_fail.png")
+    h = os.path.join(config.DATA_DIR, "debug_producers_fail.html")
+    try:
+        page.screenshot(path=p)
+        with open(h, "w", encoding="utf-8") as f:
+            f.write(page.content())
+        _log_txt(f"Debug: {p} e {h} | URL: {page.url}")
+    except Exception:
+        pass
+
 
 def _wait_lista(page):
     """Espera a lista carregar. Aceita <table> ou grid com [role=row]. Retorna seletor de linhas."""
+    page.wait_for_timeout(2000)
+    if _esta_em_2fa(page):
+        if not _resolver_2fa_painel(page):
+            _log_txt("Segunda tentativa de 2FA...")
+            if not _resolver_2fa_painel(page):
+                _debug_producers_fail(page)
+                raise RuntimeError(
+                    "Autenticação de 2 fatores na lista de produtores: validação automática falhou. "
+                    "Confira APPLYFY_TOTP_SECRET no .env."
+                )
+    if "auth" in page.url.lower():
+        _debug_producers_fail(page)
+        raise RuntimeError(
+            "Redirecionou para login (auth). Rode 01_salvar_sessao.py de novo ou verifique sessao_applyfy.json."
+        )
     try:
-        page.wait_for_selector("table, [role=row]", timeout=LIST_WAIT)
+        page.wait_for_selector(PRODUCERS_LIST_SELECTORS, state="visible", timeout=LIST_WAIT)
     except PWTimeout:
-        try:
-            page.screenshot(path=os.path.join(config.DATA_DIR, "debug_producers_fail.png"))
-            with open(os.path.join(config.DATA_DIR, "debug_producers_fail.html"), "w", encoding="utf-8") as f:
-                f.write(page.content())
-        except Exception:
-            pass
+        _debug_producers_fail(page)
         raise
     time.sleep(ESPERA_CARREGAR_LISTA)
     if page.locator("table").count() > 0:
@@ -217,14 +408,22 @@ def run_export(session_path=None, save_to_disk=True):
 
     _log_txt("Abrindo browser para exportação (aguarde ~30s)...")
     headed = os.environ.get("APPLYFY_HEADED", "").strip().lower() in ("1", "true", "yes")
+    use_headed = headed and config.has_display_server()
+    if headed and not use_headed:
+        _log_txt("Sem DISPLAY; usando headless no export (igual ao servidor).")
     with sync_playwright() as p:
         browser = p.chromium.launch(
-            headless=not headed,
-            args=["--disable-application-cache", "--disable-cache", "--disk-cache-size=0"],
+            headless=not use_headed,
+            args=[
+                "--disable-application-cache", "--disable-cache", "--disk-cache-size=0",
+                "--disable-blink-features=AutomationControlled",
+            ],
         )
         context = browser.new_context(
             storage_state=session_path,
             ignore_https_errors=False,
+            locale="pt-BR",
+            viewport={"width": 1280, "height": 800},
         )
         page = context.new_page()
         page.set_default_timeout(SEL_TIMEOUT)

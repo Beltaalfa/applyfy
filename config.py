@@ -16,3 +16,8 @@ EXPORT_CHECKPOINT = os.path.join(DATA_DIR, "export_checkpoint.json")
 
 def ensure_data_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
+
+
+def has_display_server() -> bool:
+    """True quando há DISPLAY/WAYLAND (browser headed)."""
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
