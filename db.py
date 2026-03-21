@@ -7,23 +7,34 @@ from datetime import datetime
 
 import config
 
-DATABASE_URL = os.environ.get("DATABASE_URL")
-if not DATABASE_URL and os.environ.get("PG_HOST"):
-    # Monta URL a partir de variáveis
-    user = os.environ.get("PG_USER", "applyfy")
-    password = os.environ.get("PG_PASSWORD", "")
-    host = os.environ.get("PG_HOST", "localhost")
-    port = os.environ.get("PG_PORT", "5432")
-    dbname = os.environ.get("PG_DATABASE", "applyfy")
-    DATABASE_URL = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+
+def get_database_url() -> str | None:
+    """Lê a URL do Postgres no momento da chamada (funciona após load_dotenv no script)."""
+    url = os.environ.get("DATABASE_URL")
+    if not url and os.environ.get("PG_HOST"):
+        user = os.environ.get("PG_USER", "applyfy")
+        password = os.environ.get("PG_PASSWORD", "")
+        host = os.environ.get("PG_HOST", "localhost")
+        port = os.environ.get("PG_PORT", "5432")
+        dbname = os.environ.get("PG_DATABASE", "applyfy")
+        url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+    return url
+
+
+def __getattr__(name: str):
+    """Compat: ``db.DATABASE_URL`` resolve sempre do ambiente atual."""
+    if name == "DATABASE_URL":
+        return get_database_url()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _db_user_from_url():
     """Extrai o usuário da DATABASE_URL (só para mensagens; não expõe senha)."""
-    if not DATABASE_URL:
+    url = get_database_url()
+    if not url:
         return None
     try:
-        part = DATABASE_URL.split("@")[0]
+        part = url.split("@")[0]
         if "://" in part:
             part = part.split("://", 1)[1]
         if ":" in part:
@@ -35,7 +46,11 @@ def _db_user_from_url():
 
 def get_connection():
     import psycopg2
-    return psycopg2.connect(DATABASE_URL, connect_timeout=5)
+
+    url = get_database_url()
+    if not url:
+        raise RuntimeError("DATABASE_URL não definido (configure .env ou exporte a variável).")
+    return psycopg2.connect(url, connect_timeout=5)
 
 
 @contextmanager
@@ -179,7 +194,7 @@ def _row_to_historico(run_at, row):
 
 def insert_saldo_row(run_at, row):
     """Insere um produtor no histórico durante a exportação (alimentação em tempo real)."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return
     init_db()
     with cursor() as cur:
@@ -203,7 +218,7 @@ def insert_saldo_row(run_at, row):
 
 def save_export_run(resultados, log_rows, run_at=None):
     """Salva o resultado no Postgres. run_at opcional (quando já alimentou saldos_historico durante o processo)."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return
     init_db()
     ok_c = sum(1 for r in log_rows if r.get("status") == "OK")
@@ -250,7 +265,7 @@ def save_export_run(resultados, log_rows, run_at=None):
 
 def get_last_export_data():
     """Retorna (run_at, resultados) do último export ou (None, [])."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return None, []
     init_db()
     with cursor() as cur:
@@ -268,7 +283,7 @@ def get_last_export_data():
 
 def get_datas_disponiveis():
     """Lista de (run_at, label) de runs com histórico, mais recente primeiro."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return []
     init_db()
     with cursor() as cur:
@@ -281,7 +296,7 @@ def get_datas_disponiveis():
 
 def get_relatorio_por_data(run_at):
     """Retorna lista de dicts (resultados) para a data run_at. run_at pode ser ISO string ou datetime."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return []
     init_db()
     with cursor() as cur:
@@ -311,7 +326,7 @@ def get_relatorio_por_data(run_at):
 
 def get_evolucao_produtor(email):
     """Retorna lista de { run_at, nome, saldo_pendente, ... } para o email, ordenado por run_at."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return []
     init_db()
     with cursor() as cur:
@@ -341,7 +356,7 @@ def get_evolucao_produtor(email):
 
 def get_produtores_emails():
     """Lista de { email, nome } únicos (do último run ou histórico) para dropdown."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return []
     init_db()
     with cursor() as cur:
@@ -356,7 +371,7 @@ def get_produtores_emails():
 
 def insert_webhook_transaction(transaction_id, event, offer_code, producer_id, payload):
     """Insere evento de webhook (idempotente). Retorna True se inseriu, False se duplicado."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return False
     init_db()
     with cursor() as cur:
@@ -382,7 +397,7 @@ def insert_webhook_transaction(transaction_id, event, offer_code, producer_id, p
 
 def list_transactions(date_from=None, date_to=None, event=None, offer_code=None, limit=500):
     """Lista transações com filtros. Retorna lista de dicts."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return []
     init_db()
     conditions = []
@@ -429,7 +444,7 @@ def list_transactions(date_from=None, date_to=None, event=None, offer_code=None,
 
 def save_producer_taxes(producer_id, email, taxes_snapshot):
     """Salva ou atualiza cache de taxas do produtor."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return
     init_db()
     with cursor() as cur:
@@ -448,7 +463,7 @@ def save_producer_taxes(producer_id, email, taxes_snapshot):
 
 def get_producer_taxes(producer_id=None, email=None):
     """Retorna último taxes_snapshot e fetched_at por producer_id ou email."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return None
     init_db()
     with cursor() as cur:
@@ -475,7 +490,7 @@ def get_producer_taxes(producer_id=None, email=None):
 
 def save_offer_producer(offer_code, producer_id, producer_name=None):
     """Salva mapeamento offer_code -> produtor (para preencher transações que não trazem produtor no payload)."""
-    if not DATABASE_URL or not offer_code or not producer_id:
+    if not get_database_url() or not offer_code or not producer_id:
         return
     init_db()
     with cursor() as cur:
@@ -494,7 +509,7 @@ def save_offer_producer(offer_code, producer_id, producer_name=None):
 
 def get_producer_by_offer_code(offer_code):
     """Retorna {producer_id, producer_name} para um offer_code, ou None."""
-    if not DATABASE_URL or not offer_code:
+    if not get_database_url() or not offer_code:
         return None
     init_db()
     with cursor() as cur:
@@ -510,7 +525,7 @@ def get_producer_by_offer_code(offer_code):
 
 def list_producer_created_events(limit=200):
     """Lista eventos PRODUCER_CREATED para sincronizar offer_code -> produtor."""
-    if not DATABASE_URL:
+    if not get_database_url():
         return []
     init_db()
     with cursor() as cur:
@@ -541,7 +556,7 @@ def list_webhook_producers(limit=500):
     Lista produtores únicos: webhook (PRODUCER_CREATED) + applyfy_offer_producer + fallback saldos_historico.
     Retorna lista de dicts: { producer_id, producer_name, offer_codes[] }.
     """
-    if not DATABASE_URL:
+    if not get_database_url():
         return []
     init_db()
     by_id = {}
@@ -587,7 +602,7 @@ def list_webhook_producers(limit=500):
 
 
 def list_categorias(tipo=None):
-    if not DATABASE_URL:
+    if not get_database_url():
         return []
     init_db()
     with cursor() as cur:
@@ -600,7 +615,7 @@ def list_categorias(tipo=None):
 
 
 def get_categoria(id):
-    if not DATABASE_URL or not id:
+    if not get_database_url() or not id:
         return None
     init_db()
     with cursor() as cur:
@@ -612,7 +627,7 @@ def get_categoria(id):
 
 
 def create_categoria(nome, tipo):
-    if not DATABASE_URL or not nome or tipo not in ("receita", "despesa"):
+    if not get_database_url() or not nome or tipo not in ("receita", "despesa"):
         return None
     init_db()
     with cursor() as cur:
@@ -624,7 +639,7 @@ def create_categoria(nome, tipo):
 
 
 def update_categoria(id, nome=None, tipo=None, ativa=None):
-    if not DATABASE_URL or not id:
+    if not get_database_url() or not id:
         return False
     init_db()
     updates, params = [], []
@@ -646,7 +661,7 @@ def update_categoria(id, nome=None, tipo=None, ativa=None):
 
 
 def delete_categoria(id):
-    if not DATABASE_URL or not id:
+    if not get_database_url() or not id:
         return False
     init_db()
     with cursor() as cur:
@@ -668,7 +683,7 @@ def _parse_period(date_from=None, date_to=None, mes=None, ano=None):
 
 
 def list_lancamentos(date_from=None, date_to=None, mes=None, ano=None, tipo=None, categoria_id=None, limit=2000):
-    if not DATABASE_URL:
+    if not get_database_url():
         return []
     date_from, date_to = _parse_period(date_from, date_to, mes, ano)
     init_db()
@@ -700,7 +715,7 @@ def list_lancamentos(date_from=None, date_to=None, mes=None, ano=None, tipo=None
 
 
 def get_lancamento(id):
-    if not DATABASE_URL or not id:
+    if not get_database_url() or not id:
         return None
     init_db()
     with cursor() as cur:
@@ -712,7 +727,7 @@ def get_lancamento(id):
 
 
 def create_lancamento(data, valor, tipo, categoria_id=None, descricao=None, natureza_dfc=None):
-    if not DATABASE_URL or tipo not in ("receita", "despesa"):
+    if not get_database_url() or tipo not in ("receita", "despesa"):
         return None
     try:
         val = abs(float(valor))
@@ -730,7 +745,7 @@ def create_lancamento(data, valor, tipo, categoria_id=None, descricao=None, natu
 
 
 def update_lancamento(id, data=None, valor=None, tipo=None, categoria_id=None, descricao=None, naturaleza_dfc=None):
-    if not DATABASE_URL or not id:
+    if not get_database_url() or not id:
         return False
     updates, params = ["updated_at = NOW()"], []
     if data is not None:
@@ -763,7 +778,7 @@ def update_lancamento(id, data=None, valor=None, tipo=None, categoria_id=None, d
 
 
 def delete_lancamento(id):
-    if not DATABASE_URL or not id:
+    if not get_database_url() or not id:
         return False
     init_db()
     with cursor() as cur:
@@ -772,7 +787,7 @@ def delete_lancamento(id):
 
 
 def relatorio_fluxo_caixa(date_from=None, date_to=None, mes=None, ano=None):
-    if not DATABASE_URL:
+    if not get_database_url():
         return {"dias": [], "total_receitas": 0, "total_despesas": 0, "saldo": 0}
     date_from, date_to = _parse_period(date_from, date_to, mes, ano)
     if not date_from or not date_to:
@@ -788,7 +803,7 @@ def relatorio_fluxo_caixa(date_from=None, date_to=None, mes=None, ano=None):
 
 
 def relatorio_dre(date_from=None, date_to=None, mes=None, ano=None):
-    if not DATABASE_URL:
+    if not get_database_url():
         return {"receitas": [], "despesas": [], "total_receitas": 0, "total_despesas": 0, "resultado": 0}
     date_from, date_to = _parse_period(date_from, date_to, mes, ano)
     if not date_from or not date_to:
@@ -805,7 +820,7 @@ def relatorio_dre(date_from=None, date_to=None, mes=None, ano=None):
 
 
 def relatorio_dfc(date_from=None, date_to=None, mes=None, ano=None):
-    if not DATABASE_URL:
+    if not get_database_url():
         return {"operacional": {"entradas": 0, "saidas": 0, "saldo": 0}, "investimento": {"entradas": 0, "saidas": 0, "saldo": 0}, "financiamento": {"entradas": 0, "saidas": 0, "saldo": 0}}
     date_from, date_to = _parse_period(date_from, date_to, mes, ano)
     if not date_from or not date_to:
@@ -825,3 +840,102 @@ def relatorio_dfc(date_from=None, date_to=None, mes=None, ano=None):
     for nat in result:
         result[nat]["saldo"] = result[nat]["entradas"] - result[nat]["saidas"]
     return result
+
+
+def list_applyfy_vendas(
+    date_from=None,
+    date_to=None,
+    adquirente=None,
+    status_pagamento=None,
+    produtor_email=None,
+    comprador_email=None,
+    busca=None,
+    limit=200,
+    offset=0,
+):
+    """Lista vendas consolidadas da tabela applyfy_vendas com filtros e paginação."""
+    if not get_database_url():
+        return {"rows": [], "total": 0}
+    init_db()
+    conditions = []
+    params = []
+    if date_from:
+        conditions.append("data_venda >= %s")
+        params.append(date_from)
+    if date_to:
+        conditions.append("data_venda <= %s")
+        params.append(date_to)
+    if adquirente:
+        conditions.append("adquirente ILIKE %s")
+        params.append(f"%{adquirente}%")
+    if status_pagamento:
+        conditions.append("status_pagamento ILIKE %s")
+        params.append(f"%{status_pagamento}%")
+    if produtor_email:
+        conditions.append("produtor_email ILIKE %s")
+        params.append(f"%{produtor_email}%")
+    if comprador_email:
+        conditions.append("comprador_email ILIKE %s")
+        params.append(f"%{comprador_email}%")
+    if busca:
+        conditions.append(
+            "(codigo_venda ILIKE %s OR order_id ILIKE %s OR transaction_id ILIKE %s OR "
+            "comprador_nome ILIKE %s OR produtor_nome ILIKE %s OR produto_nome ILIKE %s)"
+        )
+        like = f"%{busca}%"
+        params.extend([like, like, like, like, like, like])
+    where = " AND ".join(conditions) if conditions else "1=1"
+    lim = min(max(int(limit), 1), 1000)
+    off = max(int(offset), 0)
+
+    with cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) FROM applyfy_vendas WHERE {where};", params)
+        total = int(cur.fetchone()[0] or 0)
+        cur.execute(
+            f"""
+            SELECT
+                codigo_venda, order_id, transaction_id, status_pagamento, valor_total, valor_cobrado,
+                data_venda, data_liberacao, data_pagamento, data_atualizacao, metodo_pagamento,
+                adquirente, adquirente_bruto, id_adquirente, taxa_processamento, taxa_adquirente, retencao,
+                comissao_produtor, valor_liquido_produtor, produtor_nome, produtor_email, comprador_nome,
+                comprador_email, comprador_telefone, comprador_cpf, comprador_cnpj, produto_nome, produto_id,
+                offer_code, quantidade, valor_unitario, afiliado_nome, afiliado_email, affiliate_code,
+                response_time_ms, tentativa_status, tentativa_substatus, tentativa_mensagem,
+                pais, cep, estado, cidade, bairro, rua, numero, complemento,
+                source_strategy, imported_at, last_seen_at
+            FROM applyfy_vendas
+            WHERE {where}
+            ORDER BY data_venda DESC NULLS LAST, last_seen_at DESC
+            LIMIT %s OFFSET %s;
+            """,
+            [*params, lim, off],
+        )
+        rows = cur.fetchall()
+
+    cols = [
+        "codigo_venda", "order_id", "transaction_id", "status_pagamento", "valor_total", "valor_cobrado",
+        "data_venda", "data_liberacao", "data_pagamento", "data_atualizacao", "metodo_pagamento",
+        "adquirente", "adquirente_bruto", "id_adquirente", "taxa_processamento", "taxa_adquirente", "retencao",
+        "comissao_produtor", "valor_liquido_produtor", "produtor_nome", "produtor_email", "comprador_nome",
+        "comprador_email", "comprador_telefone", "comprador_cpf", "comprador_cnpj", "produto_nome", "produto_id",
+        "offer_code", "quantidade", "valor_unitario", "afiliado_nome", "afiliado_email", "affiliate_code",
+        "response_time_ms", "tentativa_status", "tentativa_substatus", "tentativa_mensagem",
+        "pais", "cep", "estado", "cidade", "bairro", "rua", "numero", "complemento",
+        "source_strategy", "imported_at", "last_seen_at",
+    ]
+    out = []
+    for r in rows:
+        item = {}
+        for i, c in enumerate(cols):
+            v = r[i]
+            if hasattr(v, "isoformat"):
+                v = v.isoformat()
+            elif isinstance(v, (int, float)):
+                v = v
+            elif v is None:
+                v = None
+            else:
+                v = str(v)
+            item[c] = v
+        out.append(item)
+    return {"rows": out, "total": total}

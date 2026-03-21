@@ -178,3 +178,64 @@ Se o projeto foi clonado de novo ou a pasta foi restaurada do GitHub:
 - **Primeira sessão:** na primeira vez, o login automático pode falhar se os seletores da página de login da Applyfy forem diferentes. Rode com `HEADLESS=0` para ver o browser: `HEADLESS=0 python 01_salvar_sessao.py` e ajuste os seletores em `01_salvar_sessao.py` se necessário.
 - **Firewall:** libere 80 e 443 para o Nginx.
 - **Troca de senha/2FA:** após testar, troque a senha e regenere o 2FA na Applyfy (as credenciais foram usadas no chat).
+
+## 11. Exportador de vendas ApplyFy (PostgreSQL + upsert)
+
+Arquivos principais:
+
+- `applyfy_export_vendas.py` (orquestrador Playwright)
+- `applyfy_parser.py` (payload Next.js + fallback DOM)
+- `applyfy_repository.py` (DDL + persistência)
+- `03_exportar_vendas.py` (executor)
+- `sql/applyfy_vendas.sql` (DDL standalone)
+
+Pré-requisitos:
+
+- Sessão autenticada salva em `data/sessao_applyfy.json` (`python 01_salvar_sessao.py`)
+- `DATABASE_URL` configurada para habilitar persistência em Postgres
+
+Execução:
+
+```bash
+cd /var/www/applyfy
+source venv/bin/activate
+python 03_exportar_vendas.py
+```
+
+Variáveis úteis:
+
+- `ORDERS_PAGE_SIZE` (default `50`)
+- `APPLYFY_HEADED=1` para abrir browser visível (se houver DISPLAY)
+- `EXPORT_VENDAS_GOTO_RETRIES` (default `5`) — repetições em `page.goto` se aparecer `net::ERR_NETWORK_CHANGED` ou timeout
+- `EXPORT_VENDAS_GOTO_RETRY_SEC` (default `2`) — base de espera entre tentativas (multiplicada pelo número da tentativa)
+- `EXPORT_VENDAS_START_PAGINA` — ex.: `29` para **voltar a uma página** e ignorar o checkpoint em disco; a **linha inicial** vem do Postgres: `COALESCE(MAX(linha),0)` em `applyfy_import_log` com `pagina` e `status='OK'` (próxima linha da lista após o último OK naquela página). O checkpoint em disco é atualizado ao iniciar.
+- `EXPORT_VENDAS_ORDERS_SEL_TIMEOUT_MS` — timeout só da lista `/admin/orders` (default = `EXPORT_VENDAS_SEL_TIMEOUT_MS` ou 120000).
+- `EXPORT_VENDAS_ORDERS_LOAD_RETRIES` (default `3`) — tentativas com `reload` se a tabela não aparecer.
+- `EXPORT_VENDAS_ORDERS_SETTLE_MS` (default `2500`) — pausa após `load` para a SPA hidratar.
+
+Arquivos de saída em `data/`:
+
+- `applyfy_orders_log.txt`
+- `applyfy_orders_log.csv`
+- `applyfy_orders_log.json`
+- `orders_export_checkpoint.json` (retomada)
+
+**Painel web — log e job de vendas**
+
+- URL: **`/log-vendas.html`** ou **`/log-vendas`** (ambas servidas pelo Flask após deploy).
+- APIs: `GET /api/vendas/log` ou `GET /api/vendas-log`, `GET /api/vendas/import-log` ou `GET /api/vendas-import-log`, `POST /api/job-vendas/start`, `POST /api/job-vendas/stop`.
+- Se o HTML carregar mas as APIs retornarem erro em JSON: o `app.py` em produção está desatualizado — faça **git pull** e **`sudo systemctl restart applyfy-painel`** (ou o nome do seu unit).
+- **Iniciar export** no painel executa `03_exportar_vendas.py` como o mesmo usuário do gunicorn; exige `venv`, Playwright/Chromium instalados e `data/sessao_applyfy.json` válida.
+
+Comportamento de robustez:
+
+- Estratégia primária: parse do payload Next.js (`source_strategy=payload`)
+- Fallback: extração por DOM (`source_strategy=dom`)
+- Upsert com chave primária lógica em `transaction_id`
+- Retomada automática por checkpoint em falhas/interrupções
+
+Para recriar estrutura do banco manualmente:
+
+```bash
+psql "$DATABASE_URL" -f /var/www/applyfy/sql/applyfy_vendas.sql
+```

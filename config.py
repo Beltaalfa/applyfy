@@ -11,6 +11,10 @@ OUT_CSV = os.path.join(DATA_DIR, "produtores_saldos.csv")
 OUT_XLSX = os.path.join(DATA_DIR, "produtores_saldos.xlsx")
 LOG_TXT = os.path.join(DATA_DIR, "applyfy_log.txt")
 LOG_CSV = os.path.join(DATA_DIR, "applyfy_log.csv")
+# Export de vendas (Playwright → Postgres)
+ORDERS_LOG_TXT = os.path.join(DATA_DIR, "applyfy_orders_log.txt")
+ORDERS_LOG_CSV = os.path.join(DATA_DIR, "applyfy_orders_log.csv")
+ORDERS_LOG_JSON = os.path.join(DATA_DIR, "applyfy_orders_log.json")
 EXPORT_CHECKPOINT = os.path.join(DATA_DIR, "export_checkpoint.json")
 
 

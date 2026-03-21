@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Vendas Consolidadas | Applyfy</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0a0a0b; --card:#121214; --b:#1e1e22; --t:#e4e4e7; --m:#71717a; --a:#c9a227; }
+    * { box-sizing:border-box; } body{margin:0;font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--t);}
+    .wrap{max-width:1600px;margin:0 auto;padding:1rem;}
+    .nav a{color:var(--a);margin-right:.8rem;text-decoration:none}
+    .filters{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0}
+    .filters input,.filters button{padding:.5rem .7rem;border:1px solid var(--b);border-radius:8px;background:var(--card);color:var(--t)}
+    .filters button{background:var(--a);color:#111;font-weight:700;cursor:pointer}
+    .card{background:var(--card);border:1px solid var(--b);border-radius:8px;overflow:hidden}
+    .table-wrap{overflow:auto;max-height:75vh}
+    table{width:100%;border-collapse:collapse;font-size:.8rem}
+    th,td{padding:.55rem .7rem;border-bottom:1px solid var(--b);white-space:nowrap}
+    th{position:sticky;top:0;background:#17171a;color:var(--m)}
+    .num{text-align:right}
+    .muted{color:var(--m)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav class="nav">
+      <a href="/">Painel</a><a href="/historico">Histórico</a><a href="/evolucao">Evolução</a><a href="/vendas">Vendas</a><a href="/log-vendas.html">Log vendas</a><a href="/transacoes">Transações</a><a href="/produtores">Produtores</a><a href="/financeiro">Financeiro</a><a href="/log">Log saldos</a>
+    </nav>
+    <h1>Vendas consolidadas</h1>
+    <div class="filters">
+      <input type="date" id="dateFrom"><input type="date" id="dateTo">
+      <input type="text" id="q" placeholder="Busca (venda, transação, cliente, produto)">
+      <input type="text" id="adquirente" placeholder="Adquirente">
+      <input type="text" id="status" placeholder="Status">
+      <button id="btnBuscar">Buscar</button>
+      <button id="btnMais">Carregar mais</button>
+    </div>
+    <p id="meta" class="muted">Carregando...</p>
+    <div class="card"><div class="table-wrap"><table><thead id="thead"></thead><tbody id="tbody"></tbody></table></div></div>
+  </div>
+  <script>
+    var columns = [
+      'codigo_venda','order_id','transaction_id','status_pagamento','valor_total','valor_cobrado','data_venda','data_liberacao','data_pagamento','data_atualizacao',
+      'metodo_pagamento','adquirente','adquirente_bruto','id_adquirente','taxa_processamento','taxa_adquirente','retencao','comissao_produtor','valor_liquido_produtor',
+      'produtor_nome','produtor_email','comprador_nome','comprador_email','comprador_telefone','comprador_cpf','comprador_cnpj','produto_nome','produto_id','offer_code',
+      'quantidade','valor_unitario','afiliado_nome','afiliado_email','affiliate_code','response_time_ms','tentativa_status','tentativa_substatus','tentativa_mensagem',
+      'pais','cep','estado','cidade','bairro','rua','numero','complemento','source_strategy','imported_at','last_seen_at'
+    ];
+    var numeric = new Set(['valor_total','valor_cobrado','taxa_processamento','taxa_adquirente','retencao','comissao_produtor','valor_liquido_produtor','valor_unitario','quantidade','response_time_ms']);
+    var offset = 0, limit = 200, total = 0, rows = [];
+    function fmt(k,v){
+      if (v==null||v==='') return '–';
+      if (numeric.has(k)) {
+        if (k==='quantidade'||k==='response_time_ms') return String(v);
+        return new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(Number(v)||0);
+      }
+      if (k.indexOf('data_')===0 || k==='imported_at' || k==='last_seen_at') {
+        var d = new Date(String(v)); if (!isNaN(d.getTime())) return d.toLocaleString('pt-BR');
+      }
+      return String(v);
+    }
+    function qs(){
+      var p = new URLSearchParams();
+      var from=document.getElementById('dateFrom').value, to=document.getElementById('dateTo').value;
+      var q=document.getElementById('q').value.trim(), aq=document.getElementById('adquirente').value.trim(), st=document.getElementById('status').value.trim();
+      if(from)p.set('date_from',from); if(to)p.set('date_to',to); if(q)p.set('q',q); if(aq)p.set('adquirente',aq); if(st)p.set('status_pagamento',st);
+      p.set('limit',String(limit)); p.set('offset',String(offset)); return p.toString();
+    }
+    function render(){
+      var th=document.getElementById('thead'), tb=document.getElementById('tbody');
+      th.innerHTML='<tr>'+columns.map(c=>'<th class="'+(numeric.has(c)?'num':'')+'">'+c+'</th>').join('')+'</tr>';
+      tb.innerHTML = rows.length ? rows.map(r=>'<tr>'+columns.map(c=>'<td class="'+(numeric.has(c)?'num':'')+'" title="'+(r[c]??'')+'">'+fmt(c,r[c])+'</td>').join('')+'</tr>').join('') : '<tr><td colspan="'+columns.length+'" class="muted">Sem dados</td></tr>';
+      document.getElementById('meta').textContent = 'Total: '+total+' | Exibindo: '+rows.length;
+    }
+    function load(reset){
+      if(reset){offset=0;rows=[];}
+      fetch('/api/vendas?'+qs()).then(r=>r.json()).then(d=>{
+        if(d.error){document.getElementById('meta').textContent='Erro: '+d.error;return;}
+        total=d.total||0; rows=rows.concat(d.rows||[]); offset=rows.length; render();
+      }).catch(e=>{document.getElementById('meta').textContent='Erro: '+e.message;});
+    }
+    document.getElementById('btnBuscar').addEventListener('click', ()=>load(true));
+    document.getElementById('btnMais').addEventListener('click', ()=>load(false));
+    load(true);
+  </script>
+</body>
+</html>

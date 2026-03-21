@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 import config
 import db
+from applyfy_repository import list_applyfy_vendas_import_log
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
@@ -323,6 +324,94 @@ def api_transacoes():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/vendas")
+def api_vendas():
+    """Lista vendas consolidadas (applyfy_vendas) com filtros e paginação."""
+    try:
+        date_from = request.args.get("date_from") or request.args.get("dateFrom")
+        date_to = request.args.get("date_to") or request.args.get("dateTo")
+        adquirente = request.args.get("adquirente")
+        status_pagamento = request.args.get("status_pagamento") or request.args.get("status")
+        produtor_email = request.args.get("produtor_email")
+        comprador_email = request.args.get("comprador_email")
+        busca = request.args.get("q") or request.args.get("busca")
+        limit = request.args.get("limit", 200, type=int)
+        offset = request.args.get("offset", 0, type=int)
+        data = db.list_applyfy_vendas(
+            date_from=date_from,
+            date_to=date_to,
+            adquirente=adquirente,
+            status_pagamento=status_pagamento,
+            produtor_email=produtor_email,
+            comprador_email=comprador_email,
+            busca=busca,
+            limit=limit,
+            offset=offset,
+        )
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def _vendas_log_payload():
+    """Corpo JSON do tail de applyfy_orders_log.txt."""
+    lines = min(int(request.args.get("lines", 500)), 2000)
+    path = config.ORDERS_LOG_TXT
+    try:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                out = f.readlines()
+            out = out[-lines:] if len(out) > lines else out
+            log_content = "".join(out)
+        else:
+            log_content = "(Arquivo de log ainda não existe — rode o export de vendas ou Iniciar processo abaixo.)\n"
+    except Exception as e:
+        log_content = f"[Erro ao ler log: {e}]\n"
+    return jsonify({"log": log_content})
+
+
+@app.route("/api/vendas/log")
+@app.route("/api/vendas-log")
+def api_vendas_log():
+    """Últimas linhas do arquivo de texto do export de vendas (rota alternativa sem barra extra)."""
+    return _vendas_log_payload()
+
+
+@app.route("/api/vendas/log/clear", methods=["POST"])
+@app.route("/api/vendas-log/clear", methods=["POST"])
+def api_vendas_log_clear():
+    """Limpa txt/csv/json de sessão do export de vendas (não apaga dados no Postgres)."""
+    try:
+        config.ensure_data_dir()
+        cleared = []
+        for path in (config.ORDERS_LOG_TXT, config.ORDERS_LOG_CSV, config.ORDERS_LOG_JSON):
+            if os.path.isfile(path):
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write("")
+                cleared.append(os.path.basename(path))
+        return jsonify({"ok": True, "message": "Log de vendas limpo." if cleared else "Nenhum arquivo para limpar."})
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
+
+
+def _vendas_import_log_payload():
+    limit = request.args.get("limit", 200, type=int)
+    offset = request.args.get("offset", 0, type=int)
+    status = request.args.get("status")
+    data = list_applyfy_vendas_import_log(limit=limit, offset=offset, status=status)
+    return jsonify(data)
+
+
+@app.route("/api/vendas/import-log")
+@app.route("/api/vendas-import-log")
+def api_vendas_import_log():
+    """Histórico em applyfy_import_log (rota alternativa)."""
+    try:
+        return _vendas_import_log_payload()
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/transacoes/sync-offer-producers")
 def api_sync_offer_producers():
     """Preenche mapeamento offer_code -> produtor a partir dos PRODUCER_CREATED já salvos (chama API ApplyFy)."""
@@ -627,9 +716,21 @@ def log_page():
     return send_from_directory(app.static_folder, "log.html")
 
 
+@app.route("/log-vendas")
+@app.route("/log-vendas.html")
+def log_vendas_page():
+    """HTML do painel de log de vendas (duas URLs para nginx/proxy e links diretos)."""
+    return send_from_directory(app.static_folder, "log-vendas.html")
+
+
 @app.route("/transacoes")
 def transacoes_page():
     return send_from_directory(app.static_folder, "transacoes.html")
+
+
+@app.route("/vendas")
+def vendas_page():
+    return send_from_directory(app.static_folder, "vendas.html")
 
 
 @app.route("/produtores")
@@ -701,6 +802,73 @@ def api_job_stop():
         return jsonify({"ok": False, "message": "Timeout ao tentar parar."}), 500
     except FileNotFoundError:
         return jsonify({"ok": False, "message": "pkill não encontrado. Instale o pacote procps (apt install procps)."}), 500
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
+
+
+@app.route("/api/job-vendas/start", methods=["POST"])
+def api_job_vendas_start():
+    """Inicia em background o export de vendas (03_exportar_vendas.py → Playwright + Postgres)."""
+    try:
+        config.ensure_data_dir()
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        env.setdefault("APPLYFY_DATA_DIR", config.DATA_DIR)
+        py = os.path.join(BASE_DIR, "venv", "bin", "python")
+        if not os.path.isfile(py):
+            py = "python3"
+        script = os.path.join(BASE_DIR, "03_exportar_vendas.py")
+        if not os.path.isfile(script):
+            return jsonify({"ok": False, "message": f"Script não encontrado: {script}"}), 500
+        banner = (
+            f"\n{'=' * 60}\n"
+            f"[{datetime.now().isoformat()}] Export vendas iniciado pelo painel (PID em background)\n"
+            f"{'=' * 60}\n"
+        )
+        with open(config.ORDERS_LOG_TXT, "a", encoding="utf-8") as log_file:
+            log_file.write(banner)
+            subprocess.Popen(
+                [py, script],
+                cwd=BASE_DIR,
+                env=env,
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        return jsonify(
+            {
+                "ok": True,
+                "message": "Export de vendas iniciado. Acompanhe o texto abaixo (e reinicie a tabela após alguns registros).",
+            }
+        )
+    except Exception as e:
+        return jsonify({"ok": False, "message": str(e)}), 500
+
+
+@app.route("/api/job-vendas/stop", methods=["POST"])
+def api_job_vendas_stop():
+    """Interrompe o processo do export de vendas (script + Chromium do Playwright)."""
+    pkill_bin = "/usr/bin/pkill" if os.path.isfile("/usr/bin/pkill") else "pkill"
+    # Encerra o Python do export; o Chromium filho costuma encerrar junto.
+    patterns = ["03_exportar_vendas.py"]
+    try:
+        for pattern in patterns:
+            subprocess.run(
+                [pkill_bin, "-f", pattern],
+                capture_output=True,
+                timeout=8,
+                env={**os.environ, "PATH": "/usr/bin:/bin:/usr/local/bin"},
+            )
+        return jsonify(
+            {
+                "ok": True,
+                "message": "Parada enviada ao export de vendas (e Chromium do Playwright). Pode levar alguns segundos.",
+            }
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "message": "Timeout ao tentar parar o export de vendas."}), 500
+    except FileNotFoundError:
+        return jsonify({"ok": False, "message": "pkill não encontrado (apt install procps)."}), 500
     except Exception as e:
         return jsonify({"ok": False, "message": str(e)}), 500
 
