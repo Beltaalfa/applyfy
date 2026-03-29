@@ -4,7 +4,7 @@ API Flask do painel Applyfy: último relatório (JSON) e download XLSX/CSV.
 """
 import os
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 from flask import Flask, request, jsonify, send_file, send_from_directory
@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 
 import config
 import db
+import waha_client
 from applyfy_repository import list_applyfy_vendas_import_log
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -19,6 +20,47 @@ load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 app.config["JSON_AS_ASCII"] = False
+
+
+def _persist_applyfy_webhook(payload: dict, request_id_header: str = "") -> tuple[str, str | None]:
+    """
+    Extrai ids do payload Applyfy, insere em applyfy_transactions e mapeia offers em PRODUCER_CREATED.
+    Retorna o mesmo par que insert_webhook_transaction: inserted|duplicate|no_db|error.
+    """
+    event = payload.get("event")
+    if not event:
+        return "error", "Missing event"
+    offer_code = payload.get("offerCode") or payload.get("offer_code")
+    producer_id = None
+    if event == "PRODUCER_CREATED":
+        producer = payload.get("producer") or {}
+        transaction_id = producer.get("id") or f"producer-{event}"
+        producer_id = producer.get("id")
+    else:
+        trans = payload.get("transaction") or {}
+        transaction_id = trans.get("id") or f"tx-{event}-{request_id_header}"
+        producer_id = payload.get("producerId") or payload.get("producer_id")
+    status, ins_err = db.insert_webhook_transaction(
+        transaction_id=transaction_id or f"evt-{event}",
+        event=event,
+        offer_code=offer_code,
+        producer_id=producer_id,
+        payload=payload,
+    )
+    if status == "inserted" and event == "PRODUCER_CREATED" and producer_id:
+        try:
+            import applyfy_api
+
+            producer = payload.get("producer") or {}
+            producer_name = producer.get("name")
+            res, err = applyfy_api.get_producer(producer_id)
+            if not err and res:
+                for code in applyfy_api.offer_codes_from_producer_response(res):
+                    if code:
+                        db.save_offer_producer(code, producer_id, producer_name)
+        except Exception as e:
+            app.logger.warning("Offer-producer mapping failed: %s", str(e))
+    return status, ins_err
 
 
 def _get_ultimo_dados():
@@ -64,6 +106,151 @@ def _get_ultimo_dados():
             run_at_str = None
         return resultados, run_at_str
     return [], None
+
+
+def _admin_token_ok() -> bool:
+    expected = os.environ.get("APPLYFY_ADMIN_TOKEN", "").strip()
+    if not expected:
+        return False
+    if request.headers.get("X-Applyfy-Admin-Token", "").strip() == expected:
+        return True
+    body = request.get_json(silent=True) or {}
+    if isinstance(body, dict) and (body.get("token") or "").strip() == expected:
+        return True
+    q = (request.args.get("token") or "").strip()
+    return q == expected
+
+
+@app.route("/api/admin/waha-test", methods=["POST"])
+def api_admin_waha_test():
+    """Teste WAHA; requer APPLYFY_ADMIN_TOKEN no header X-Applyfy-Admin-Token ou JSON/query token."""
+    if not os.environ.get("APPLYFY_ADMIN_TOKEN", "").strip():
+        return jsonify({"ok": False, "error": "APPLYFY_ADMIN_TOKEN não configurado no servidor."}), 503
+    if not _admin_token_ok():
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    ok, err = waha_client.send_text("Applyfy: teste WAHA (painel / API admin)")
+    if ok:
+        return jsonify({"ok": True, "message": "Mensagem enviada."})
+    return jsonify({"ok": False, "error": err}), 502
+
+
+@app.route("/api/settings")
+def api_settings():
+    """Configuração pública de leitura para o painel (meta de vendas)."""
+    return jsonify(
+        {
+            "meta_vendas_liquidas": config.get_meta_vendas_liquidas(),
+        }
+    )
+
+
+@app.route("/api/health")
+def api_health():
+    """Liveness: disco gravável e Postgres (se DATABASE_URL existir)."""
+    db_url = db.get_database_url()
+    postgres_ok = False
+    if db_url:
+        try:
+            db.init_db()
+            with db.cursor() as cur:
+                cur.execute("SELECT 1")
+            postgres_ok = True
+        except Exception:
+            postgres_ok = False
+    data_ok = False
+    try:
+        config.ensure_data_dir()
+        probe = os.path.join(config.DATA_DIR, ".health_probe")
+        with open(probe, "w", encoding="utf-8") as f:
+            f.write("ok")
+        os.remove(probe)
+        data_ok = True
+    except Exception:
+        data_ok = False
+    overall = data_ok and (not db_url or postgres_ok)
+    return jsonify(
+        {
+            "ok": overall,
+            "postgres": postgres_ok,
+            "data_dir_writable": data_ok,
+            "database_configured": bool(db_url),
+        }
+    ), (200 if overall else 503)
+
+
+@app.route("/api/integracao-status")
+def api_integracao_status():
+    """Resumo para o painel: últimos timestamps e fila DLQ (sem segredos)."""
+    out = {
+        "last_export_run_at": None,
+        "last_webhook_received_at": None,
+        "export_stale": False,
+        "webhook_silent": False,
+        "dlq_pending_count": 0,
+        "meta_vendas_liquidas": config.get_meta_vendas_liquidas(),
+    }
+    try:
+        stale_hours = int((os.environ.get("APPLYFY_EXPORT_STALE_HOURS") or "48").strip() or "48")
+    except ValueError:
+        stale_hours = 48
+    try:
+        silence_hours = int((os.environ.get("APPLYFY_WEBHOOK_SILENCE_HOURS") or "24").strip() or "24")
+    except ValueError:
+        silence_hours = 24
+    now = datetime.now(timezone.utc)
+    try:
+        le = db.get_last_export_run_at()
+        if le is not None:
+            out["last_export_run_at"] = le.isoformat() if hasattr(le, "isoformat") else str(le)
+            if stale_hours > 0:
+                le_aware = le if getattr(le, "tzinfo", None) else le.replace(tzinfo=timezone.utc)
+                out["export_stale"] = (now - le_aware) > timedelta(hours=stale_hours)
+        lw = db.get_last_webhook_received_at()
+        if lw is not None:
+            out["last_webhook_received_at"] = lw.isoformat() if hasattr(lw, "isoformat") else str(lw)
+            if silence_hours > 0:
+                lw_aware = lw if getattr(lw, "tzinfo", None) else lw.replace(tzinfo=timezone.utc)
+                out["webhook_silent"] = (now - lw_aware) > timedelta(hours=silence_hours)
+        out["dlq_pending_count"] = db.count_webhook_dlq_pending()
+    except Exception as e:
+        out["error"] = str(e)[:200]
+    return jsonify(out)
+
+
+@app.route("/api/admin/webhook-dlq", methods=["GET"])
+def api_admin_webhook_dlq():
+    if not os.environ.get("APPLYFY_ADMIN_TOKEN", "").strip():
+        return jsonify({"error": "APPLYFY_ADMIN_TOKEN não configurado."}), 503
+    if not _admin_token_ok():
+        return jsonify({"error": "Unauthorized"}), 401
+    limit = request.args.get("limit", 50, type=int) or 50
+    return jsonify({"items": db.list_webhook_dlq_pending(limit=min(limit, 200))})
+
+
+@app.route("/api/admin/webhook-dlq/retry", methods=["POST"])
+def api_admin_webhook_dlq_retry():
+    if not os.environ.get("APPLYFY_ADMIN_TOKEN", "").strip():
+        return jsonify({"error": "APPLYFY_ADMIN_TOKEN não configurado."}), 503
+    if not _admin_token_ok():
+        return jsonify({"error": "Unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    dlq_id = body.get("id")
+    if dlq_id is None:
+        return jsonify({"error": "Informe id (corpo JSON)."}), 400
+    row = db.get_webhook_dlq_row(dlq_id)
+    if not row:
+        return jsonify({"error": "DLQ id não encontrado."}), 404
+    if row.get("processed_at"):
+        return jsonify({"error": "Já processado."}), 400
+    payload = row.get("payload") or {}
+    if not isinstance(payload, dict):
+        payload = {}
+    status, ins_err = _persist_applyfy_webhook(payload, f"dlq-retry-{dlq_id}")
+    if status in ("inserted", "duplicate"):
+        db.mark_webhook_dlq_processed(dlq_id)
+        return jsonify({"ok": True, "status": status})
+    db.increment_webhook_dlq_retry(dlq_id)
+    return jsonify({"ok": False, "status": status, "error": ins_err or "unknown"}), 502
 
 
 @app.route("/api/ultimo-relatorio")
@@ -183,42 +370,23 @@ def api_webhooks_applyfy():
     expected = os.environ.get("APPLYFY_WEBHOOK_TOKEN") or os.environ.get("APPLYFY_WEBHOOK_SECRET")
     if not expected or token != expected:
         return jsonify({"error": "Unauthorized"}), 401
-    event = payload.get("event")
-    if not event:
+    if not payload.get("event"):
         return jsonify({"error": "Missing event"}), 400
-    transaction_id = None
-    offer_code = payload.get("offerCode") or payload.get("offer_code")
-    producer_id = None
-    if event == "PRODUCER_CREATED":
-        producer = payload.get("producer") or {}
-        transaction_id = producer.get("id") or f"producer-{event}"
-        producer_id = producer.get("id")
-    else:
-        trans = payload.get("transaction") or {}
-        transaction_id = trans.get("id") or f"tx-{event}-{request.headers.get('X-Request-Id', '')}"
-        producer_id = payload.get("producerId") or payload.get("producer_id")
     try:
-        db.insert_webhook_transaction(
-            transaction_id=transaction_id or f"evt-{event}",
-            event=event,
-            offer_code=offer_code,
-            producer_id=producer_id,
-            payload=payload,
-        )
-        if event == "PRODUCER_CREATED" and producer_id:
+        status, ins_err = _persist_applyfy_webhook(payload, request.headers.get("X-Request-Id", ""))
+        if status == "error" and ins_err:
             try:
-                import applyfy_api
-                producer = payload.get("producer") or {}
-                producer_name = producer.get("name")
-                res, err = applyfy_api.get_producer(producer_id)
-                if not err and res:
-                    for code in applyfy_api.offer_codes_from_producer_response(res):
-                        if code:
-                            db.save_offer_producer(code, producer_id, producer_name)
-            except Exception as e:
-                app.logger.warning("Offer-producer mapping failed: %s", str(e))
+                db.insert_webhook_dlq(
+                    event=payload.get("event"),
+                    payload=payload if isinstance(payload, dict) else {},
+                    error_message=ins_err,
+                )
+            except Exception as ex:
+                app.logger.warning("Webhook DLQ insert failed: %s", ex)
+        elif status == "no_db":
+            app.logger.warning("Webhook: sem DATABASE_URL; evento não persistido.")
     except Exception as e:
-        app.logger.warning("Webhook insert failed: %s", str(e))
+        app.logger.warning("Webhook persist failed: %s", str(e))
     return "", 200
 
 
@@ -736,6 +904,11 @@ def vendas_page():
 @app.route("/produtores")
 def produtores_page():
     return send_from_directory(app.static_folder, "produtores.html")
+
+
+@app.route("/integracoes")
+def integracoes_page():
+    return send_from_directory(app.static_folder, "integracoes.html")
 
 
 @app.route("/meta")

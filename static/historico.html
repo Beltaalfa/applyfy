@@ -3,76 +3,62 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#c9a227">
+  <meta name="theme-color" content="#000000">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Histórico por data | Applyfy</title>
   <link rel="manifest" href="/static/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    :root { --bg: #0a0a0b; --bg-card: #121214; --border: #1e1e22; --text: #e4e4e7; --text-muted: #71717a; --accent: #c9a227; --radius: 8px; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
-    .wrap { max-width: 1400px; margin: 0 auto; padding: 1rem; padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); padding-bottom: max(2rem, env(safe-area-inset-bottom)); }
-    @media (max-width: 640px) { .wrap { padding: 0.75rem; } h1 { font-size: 1.25rem; } .filtro select { min-width: 100%; min-height: 44px; } th, td { padding: 0.5rem; font-size: 0.75rem; } }
-    h1 { font-size: 1.5rem; margin: 0 0 1rem 0; }
-    .nav { margin-bottom: 1.5rem; }
-    .nav a { color: var(--accent); text-decoration: none; margin-right: 1rem; padding: 0.5rem 0; min-height: 44px; display: inline-flex; align-items: center; }
-    .nav a:hover { text-decoration: underline; }
-    .filtro { margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
-    .filtro label { color: var(--text-muted); }
-    .filtro select { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 1rem; min-width: 220px; }
-    .filtro .btn { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--accent); background: var(--accent); color: #0a0a0b; font-weight: 600; text-decoration: none; font-size: 0.875rem; cursor: pointer; display: inline-flex; align-items: center; }
-    .filtro .btn:hover { opacity: 0.9; }
-    .filtro .btn:disabled, .filtro .btn.disabled { opacity: 0.5; pointer-events: none; }
-    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-    .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
-    th { font-weight: 600; color: var(--text-muted); white-space: nowrap; cursor: pointer; user-select: none; }
-    th:hover { color: var(--accent); }
-    th .sort-icon { opacity: 0.5; margin-left: 0.25rem; }
-    th.sorted .sort-icon { opacity: 1; color: var(--accent); }
-    th.num { text-align: right; }
-    .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .empty { padding: 3rem; text-align: center; color: var(--text-muted); }
-  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/painel-theme.css">
 </head>
-<body>
-  <div class="wrap">
-    <nav class="nav"><a href="/">← Painel</a> <a href="/historico">Histórico</a> <a href="/evolucao">Evolução</a> <a href="/transacoes">Transações</a> <a href="/meta">Meta</a> <a href="/produtores">Produtores</a> <a href="/financeiro">Financeiro</a> <a href="/log">Log</a></nav>
-    <h1>Histórico de saldos por data</h1>
-    <div class="filtro">
-      <label for="data">Data do relatório:</label>
-      <select id="data">
-        <option value="">Carregando…</option>
-      </select>
-      <a href="#" id="btnExportarXlsx" class="btn disabled" download>Exportar XLSX</a>
-    </div>
-    <p class="empty" id="msgHistorico" style="margin-bottom:1rem;"></p>
-    <div class="card">
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th data-col="Nome" data-type="text">Nome <span class="sort-icon">↕</span></th>
-              <th data-col="Email" data-type="text">Email <span class="sort-icon">↕</span></th>
-              <th data-col="Saldo pendente" data-type="num" class="num">Saldo pendente <span class="sort-icon">↕</span></th>
-              <th data-col="Saldo retido" data-type="num" class="num">Saldo retido <span class="sort-icon">↕</span></th>
-              <th data-col="Saldo disponível" data-type="num" class="num">Saldo disponível <span class="sort-icon">↕</span></th>
-              <th data-col="Total sacado" data-type="num" class="num">Total sacado <span class="sort-icon">↕</span></th>
-              <th data-col="Vendas líquidas" data-type="num" class="num">Vendas líquidas <span class="sort-icon">↕</span></th>
-              <th data-col="Indicação" data-type="num" class="num">Indicação <span class="sort-icon">↕</span></th>
-              <th data-col="Outros" data-type="num" class="num">Outros <span class="sort-icon">↕</span></th>
-            </tr>
-          </thead>
-          <tbody id="tbody"><tr><td colspan="9" class="empty">Selecione uma data.</td></tr></tbody>
-        </table>
-      </div>
+<body data-active="/historico">
+  <div class="app-shell" id="app-shell">
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
+    <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
+    <div class="main-column">
+      <header class="top-bar">
+        <div class="top-bar-inner">
+          <h1 class="page-title">Histórico de saldos por data</h1>
+        </div>
+      </header>
+      <main class="main-content">
+        <div class="filtro">
+          <label for="data">Data do relatório:</label>
+          <select id="data">
+            <option value="">Carregando…</option>
+          </select>
+          <a href="#" id="btnExportarXlsx" class="btn btn-primary disabled" download>Exportar XLSX</a>
+        </div>
+        <p class="empty" id="msgHistorico" style="margin-bottom:1rem;"></p>
+        <div class="card">
+          <div class="table-wrap flat">
+            <table>
+              <thead>
+                <tr>
+                  <th data-col="Nome" data-type="text">Nome <span class="sort-icon">↕</span></th>
+                  <th data-col="Email" data-type="text">Email <span class="sort-icon">↕</span></th>
+                  <th data-col="Saldo pendente" data-type="num" class="num">Saldo pendente <span class="sort-icon">↕</span></th>
+                  <th data-col="Saldo retido" data-type="num" class="num">Saldo retido <span class="sort-icon">↕</span></th>
+                  <th data-col="Saldo disponível" data-type="num" class="num">Saldo disponível <span class="sort-icon">↕</span></th>
+                  <th data-col="Total sacado" data-type="num" class="num">Total sacado <span class="sort-icon">↕</span></th>
+                  <th data-col="Vendas líquidas" data-type="num" class="num">Vendas líquidas <span class="sort-icon">↕</span></th>
+                  <th data-col="Indicação" data-type="num" class="num">Indicação <span class="sort-icon">↕</span></th>
+                  <th data-col="Outros" data-type="num" class="num">Outros <span class="sort-icon">↕</span></th>
+                </tr>
+              </thead>
+              <tbody id="tbody"><tr><td colspan="9" class="empty">Selecione uma data.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </main>
     </div>
   </div>
+  <script src="/painel-shell.js" defer></script>
   <script>
     var cols = ['Nome','Email','Saldo pendente','Saldo retido','Saldo disponível','Total sacado','Vendas líquidas','Indicação','Outros'];
     var dadosAtuais = [];

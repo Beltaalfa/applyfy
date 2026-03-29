@@ -22,6 +22,15 @@ def ensure_data_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
 
 
+def get_meta_vendas_liquidas() -> float:
+    """Meta de vendas líquidas (painel /meta e notificações WAHA). Default 10000."""
+    raw = (os.environ.get("APPLYFY_META_VENDAS_LIQUIDAS") or "10000").strip()
+    try:
+        return float(raw.replace(",", "."))
+    except ValueError:
+        return 10000.0
+
+
 def has_display_server() -> bool:
     """True quando há DISPLAY/WAYLAND (browser headed)."""
     return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))

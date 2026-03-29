@@ -32,6 +32,15 @@ cp .env.example .env
 # Edite .env com: APPLYFY_USER, APPLYFY_PASSWORD, APPLYFY_TOTP_SECRET
 ```
 
+**Export em paralelo (saldos + vendas):** por defeito cada tipo já usa checkpoint e logs diferentes (`export_checkpoint.json` vs `orders_export_checkpoint.json`, etc.), pelo que pode correr **ao mesmo tempo** sem variável extra. Para **dois jobs do mesmo tipo** ou para nomes explícitos no mesmo `data/`:
+
+- `APPLYFY_EXPORT_ISOLATION` — etiqueta curta (ex.: `saldos`, `vendas`, `worker2`); os ficheiros passam a ter sufixo no nome (ex.: `applyfy_orders_log_vendas.txt`, `orders_export_checkpoint_vendas.json`). Caracteres estranhos são sanitizados.
+- `APPLYFY_ISOLATED_SESSION=1` — sessão Playwright **por etiqueta** (`sessao_applyfy_vendas.json`, …). Sem isto, todos os exports partilham `sessao_applyfy.json` (recomendado para um único login).
+
+**Painel web:** o Flask lê `config.ORDERS_LOG_*` ao arrancar. Se o export de vendas usar `APPLYFY_EXPORT_ISOLATION` no cron/CLI, o Gunicorn precisa da **mesma** variável no `.env`/systemd para o log de vendas no painel bater certo — ou deixe a variável vazia se só existir um export de vendas.
+
+**Parar job de saldos (`/api/job/stop`):** envia `pkill` a processos que correspondam a `chromium`, o que pode **encerar também** o browser do export de vendas se estiver na mesma máquina. Use com cuidado se os dois estiverem a correr.
+
 **API Admin e Webhooks (opcional):** para receber vendas/transações em tempo real e consultar taxas dos produtores:
 
 - No painel ApplyFy, em Integrações/API, obtenha as chaves e defina no `.env`:
@@ -46,6 +55,33 @@ cp .env.example .env
 
 O Nginx deve permitir POST nessa rota; certificado SSL deve estar ativo.
 
+**WAHA (WhatsApp) e notificações:** após cada export bem-sucedido (`run_daily.py`), o sistema pode enviar mensagens pela API [WAHA](https://waha.devlike.pro/) (`POST /api/sendText`). Variáveis típicas no `.env`:
+
+- `WAHA_NOTIFY_ENABLED=1` — liga o envio.
+- `WAHA_BASE_URL` — URL base do servidor WAHA (sem barra final).
+- `WAHA_NOTIFY_CHAT_ID` — um destino, ex. `5511999999999@c.us` (sem `+`) ou ID de grupo.
+- `WAHA_NOTIFY_CHAT_IDS` — opcional: vários destinos com a **mesma** notificação, separados por vírgula (ex.: dois números + um grupo). Se estiver preenchido, esta lista tem prioridade sobre `WAHA_NOTIFY_CHAT_ID`.
+- `WAHA_SESSION` — nome da sessão WAHA (muitas instalações usam `default`).
+- `WAHA_API_KEY` — se o WAHA exigir autenticação (cabeçalho `X-Api-Key`).
+- `APPLYFY_META_VENDAS_LIQUIDAS` — meta em reais para a página `/meta` e para a segunda mensagem (“metas batidas”); default `10000`.
+
+Alertas opcionais:
+
+- `WAHA_ALERT_ON_FAILURE=1` — avisa no WhatsApp em falha de login (`01_salvar_sessao`) ou limite de horas do export.
+- `WAHA_ALERT_WEBHOOK_SILENCE=1` — use com o script `scripts/alert_webhook_silence.py` no cron; envia aviso se não houver webhooks há `APPLYFY_WEBHOOK_SILENCE_HOURS` (default 24).
+
+**Privacidade (PII):** mensagens podem incluir nomes, emails e valores financeiros. Limite `WAHA_NOTIFY_CHAT_ID` / `WAHA_NOTIFY_CHAT_IDS` a números/grupos autorizados e proteja `WAHA_API_KEY` e `APPLYFY_ADMIN_TOKEN`.
+
+**Teste manual:** com venv e `.env` carregado, `python scripts/waha_ping.py`. No painel, com `APPLYFY_ADMIN_TOKEN` definido: `POST /api/admin/waha-test` com header `X-Applyfy-Admin-Token`.
+
+**Troubleshooting WAHA:** `401` — API key ou sessão; mensagem não entrega — confirme `chatId` e que a sessão WAHA está `WORKING`; timeouts — firewall entre este servidor e o WAHA.
+
+**Painel “Integrações”:** rota `/integracoes` mostra `/api/health`, últimos timestamps de export/webhook, contagem da fila DLQ e flags de atraso/silêncio (`APPLYFY_EXPORT_STALE_HOURS`, `APPLYFY_WEBHOOK_SILENCE_HOURS`).
+
+**Fila DLQ (webhooks):** falhas ao gravar em `applyfy_transactions` são guardadas em `applyfy_webhook_dlq`. Listagem e reprocessamento: `GET /api/admin/webhook-dlq` e `POST /api/admin/webhook-dlq/retry` com JSON `{"id": <id>}` e o mesmo token admin.
+
+**Documentação interna:** [docs/RECONCILIACAO.md](docs/RECONCILIACAO.md), [docs/API_VS_PLAYWRIGHT.md](docs/API_VS_PLAYWRIGHT.md).
+
 Para o cron, crie um script que carrega o `.env` antes de rodar, por exemplo `env.sh`:
 
 ```bash
@@ -54,6 +90,8 @@ set -a
 source /var/www/applyfy/.env
 set +a
 export APPLYFY_DATA_DIR=/var/www/applyfy/data
+# Recomendado se o Chromium do Playwright estiver em path partilhado (ex.: cron como www-data):
+export PLAYWRIGHT_BROWSERS_PATH=/var/www/applyfy/.playwright-browsers
 ```
 
 ## 4. Diretório de dados
@@ -92,6 +130,42 @@ DATABASE_URL=postgresql://applyfy:SUA_SENHA@localhost:5432/applyfy
 
 As tabelas são criadas automaticamente na primeira gravação (`export_runs`).
 
+## 5b. Ficheiros estáticos do painel (`static/`)
+
+O Flask serve `/`, `/historico`, `/vendas`, `/log-vendas`, etc. a partir de **`static/*.html`**. Se esses ficheiros **não existirem**, o browser mostra **Not Found** (404 do Flask).
+
+- Garanta que a pasta `static/` no servidor contém os HTML referidos em `app.py` (ex.: `index.html`, `historico.html`, `vendas.html`, …). O tema e o layout estão sobretudo em **`<style>` inline** nesses HTML (não há ficheiros `.css` separados obrigatórios no repositório atual).
+- Após deploy, valide o tema em **`/design-system`** (card, badges, modal de exemplo) e o painel em **`/`**.
+- Após `git pull` ou cópia incompleta do projeto, volte a colocar os HTML ou faça deploy a partir do repositório completo.
+- Reinicie o Gunicorn: `sudo systemctl restart applyfy-painel` (ou o nome do seu unit).
+
+Teste rápido: `curl -sI https://applyfy.northempresarial.com/health` → `200`; `curl -s https://applyfy.northempresarial.com/api/health` → JSON com `ok`; `curl -sI https://applyfy.northempresarial.com/` → `200` com `text/html`.
+
+## 5c. Usabilidade e validação do painel
+
+| Página | URL | Função |
+|--------|-----|--------|
+| Início | `/` | Links para módulos + último relatório de saldos |
+| Referência UI | `/design-system` | Cards, badges, modal (tema Applyfy) |
+| Histórico | `/historico` | Datas e relatório por `run_at` |
+| Vendas | `/vendas` | Lista em cards (API `/api/vendas`) |
+| Transações | `/transacoes` | Webhook em cards (API `/api/transacoes`) |
+| Integrações | `/integracoes` | Health, último export/webhook, DLQ, links |
+| Meta | `/meta` | Progresso vs meta de vendas líquidas (`/api/settings`) |
+| Log vendas | `/log-vendas` | Texto do export de vendas |
+| Log saldos | `/log` | Texto `applyfy_log.txt` + excerto `cron.log` (`/api/log`) |
+| Financeiro | `/financeiro` | Categorias (API) |
+| Produtores | `/produtores` | Lista para dropdown |
+| Evolução | `/evolucao` | Gráfico/dados por email |
+
+Validação automática (com venv ativo, na raiz do projeto):
+
+```bash
+python scripts/validate_painel.py
+```
+
+Deve imprimir `OK`. Ver também [USABILIDADE.md](USABILIDADE.md) no repositório.
+
 ## 6. Rodar a API com Gunicorn atrás do Nginx
 
 ```bash
@@ -114,13 +188,28 @@ User=www-data
 Group=www-data
 WorkingDirectory=/var/www/applyfy
 Environment="PATH=/var/www/applyfy/venv/bin"
-EnvironmentFile=/var/www/applyfy/.env
+# O prefixo "-" faz o systemd NÃO falhar se o ficheiro não existir (evita Result=resources).
+EnvironmentFile=-/var/www/applyfy/.env
 ExecStart=/var/www/applyfy/venv/bin/gunicorn -w 1 -b 127.0.0.1:5000 --timeout 120 app:app
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 ```
+
+**Ficheiro `.env`:** crie a partir do exemplo (`cp .env.example .env`) e preencha credenciais. Sem `.env`, o serviço ainda arranca se usar `EnvironmentFile=-/...` acima; com `EnvironmentFile=/...` (sem hífen), **falta de `.env` quebra o `systemctl start`** com `Failed to load environment files` e `result 'resources'`.
+
+**Permissões para `www-data`:** o processo do Gunicorn corre como `www-data` e precisa de **ler** o código e o `venv`:
+
+```bash
+sudo chgrp -R www-data /var/www/applyfy
+sudo chmod -R g+rX /var/www/applyfy
+sudo chmod g+w /var/www/applyfy/data   # se o painel/export gravar em data/
+```
+
+O aviso `Control server error: [Errno 13] Permission denied` no master costuma ser inofensivo se o **worker** arranca a seguir; se o serviço morrer de todo, confira `journalctl` e as permissões acima.
+
+**Após falhas em cadeia:** `sudo systemctl reset-failed applyfy-painel && sudo systemctl start applyfy-painel`
 
 ```bash
 sudo systemctl daemon-reload
@@ -160,7 +249,21 @@ Adicione (ajuste o path do `env.sh` se necessário):
 0 2 * * * cd /var/www/applyfy && . env.sh && /var/www/applyfy/venv/bin/python run_daily.py >> /var/www/applyfy/data/cron.log 2>&1
 ```
 
-**Retry e checkpoint:** O job roda em loop até concluir ou atingir 6 h (`MAX_RUN_HOURS`). O progresso é salvo em `data/export_checkpoint.json`; ao retomar, a exportação continua de onde parou. Para forçar recomeço do zero: `rm -f /var/www/applyfy/data/export_checkpoint.json`.
+**Retry e checkpoint:** O job roda em loop até concluir ou atingir 6 h (`MAX_RUN_HOURS`). O progresso é salvo em `data/export_checkpoint.json` (ou `export_checkpoint_<etiqueta>.json` se `APPLYFY_EXPORT_ISOLATION` estiver definido); ao retomar, a exportação continua de onde parou. Para forçar recomeço do zero, apague o ficheiro de checkpoint correspondente em `data/`.
+
+**Exemplo — saldos e vendas em simultâneo (dois terminais ou dois cron):**
+
+```bash
+# Terminal A (saldos) — opcional: etiqueta só para não misturar com outro job de saldos
+export APPLYFY_EXPORT_ISOLATION=saldos
+python run_daily.py   # ou o script que chama export_saldos
+
+# Terminal B (vendas)
+export APPLYFY_EXPORT_ISOLATION=vendas
+python 03_exportar_vendas.py
+```
+
+Sem etiquetas, também funciona em paralelo (checkpoints já são distintos por tipo de export).
 
 ## 9. Restauração (pós-clone ou após perda da pasta)
 
@@ -180,6 +283,8 @@ Se o projeto foi clonado de novo ou a pasta foi restaurada do GitHub:
 - **Troca de senha/2FA:** após testar, troque a senha e regenere o 2FA na Applyfy (as credenciais foram usadas no chat).
 
 ## 11. Exportador de vendas ApplyFy (PostgreSQL + upsert)
+
+**Importante:** o ficheiro `applyfy_parser.py` precisa da **implementação completa** (payload Next.js + fallback DOM) que lê o detalhe do pedido na ApplyFy. Se estiver uma versão mínima que devolve lista vazia, o export **não extrai vendas** (erro tipo “Parse não retornou vendas”). Recupere o `applyfy_parser.py` (e, se necessário, `applyfy_models.py`) do backup ou repositório original do projeto.
 
 Arquivos principais:
 
@@ -213,7 +318,7 @@ Variáveis úteis:
 - `EXPORT_VENDAS_ORDERS_LOAD_RETRIES` (default `3`) — tentativas com `reload` se a tabela não aparecer.
 - `EXPORT_VENDAS_ORDERS_SETTLE_MS` (default `2500`) — pausa após `load` para a SPA hidratar.
 
-Arquivos de saída em `data/`:
+Arquivos de saída em `data/` (com `APPLYFY_EXPORT_ISOLATION=vendas`, os nomes ganham sufixo `_vendas` antes da extensão):
 
 - `applyfy_orders_log.txt`
 - `applyfy_orders_log.csv`

@@ -114,6 +114,18 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_applyfy_transactions_offer_code ON applyfy_transactions(offer_code);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_applyfy_transactions_received_at ON applyfy_transactions(received_at);")
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS applyfy_webhook_dlq (
+                id SERIAL PRIMARY KEY,
+                received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                event TEXT,
+                payload JSONB NOT NULL,
+                error_message TEXT NOT NULL,
+                retry_count INT NOT NULL DEFAULT 0,
+                processed_at TIMESTAMPTZ
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_applyfy_webhook_dlq_pending ON applyfy_webhook_dlq (processed_at) WHERE processed_at IS NULL;")
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS applyfy_producer_taxes (
                 producer_id TEXT PRIMARY KEY,
                 email TEXT,
@@ -370,10 +382,14 @@ def get_produtores_emails():
 
 
 def insert_webhook_transaction(transaction_id, event, offer_code, producer_id, payload):
-    """Insere evento de webhook (idempotente). Retorna True se inseriu, False se duplicado."""
+    """
+    Insere evento de webhook (idempotente).
+    Retorna (status, erro_opcional): inserted | duplicate | no_db | error.
+    """
     if not get_database_url():
-        return False
+        return "no_db", None
     init_db()
+    payload_val = json.dumps(payload, ensure_ascii=False) if isinstance(payload, dict) else payload
     with cursor() as cur:
         try:
             cur.execute(
@@ -387,12 +403,157 @@ def insert_webhook_transaction(transaction_id, event, offer_code, producer_id, p
                     str(event),
                     offer_code and str(offer_code)[:64] or None,
                     producer_id and str(producer_id)[:64] or None,
-                    json.dumps(payload, ensure_ascii=False) if isinstance(payload, dict) else payload,
+                    payload_val,
                 ),
             )
-            return cur.rowcount > 0
-        except Exception:
-            return False
+            if cur.rowcount > 0:
+                return "inserted", None
+            return "duplicate", None
+        except Exception as e:
+            return "error", str(e)[:500]
+
+
+def insert_webhook_dlq(event, payload, error_message):
+    """Persiste payload que não pôde ser gravado em applyfy_transactions."""
+    if not get_database_url():
+        return
+    init_db()
+    if not isinstance(payload, dict):
+        payload = {}
+    with cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO applyfy_webhook_dlq (event, payload, error_message)
+            VALUES (%s, %s, %s);
+            """,
+            (
+                (event and str(event)[:128]) or None,
+                json.dumps(payload, ensure_ascii=False),
+                (error_message or "")[:2000],
+            ),
+        )
+
+
+def get_webhook_dlq_row(dlq_id):
+    """Uma linha da DLQ por id ou None."""
+    if not get_database_url():
+        return None
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, received_at, event, error_message, retry_count, payload, processed_at
+            FROM applyfy_webhook_dlq WHERE id = %s;
+            """,
+            (int(dlq_id),),
+        )
+        r = cur.fetchone()
+    if not r:
+        return None
+    p = r[5]
+    if isinstance(p, str):
+        p = json.loads(p) if p else {}
+    return {
+        "id": r[0],
+        "received_at": r[1].isoformat() if hasattr(r[1], "isoformat") else str(r[1]),
+        "event": r[2],
+        "error_message": r[3],
+        "retry_count": r[4],
+        "payload": p if isinstance(p, dict) else {},
+        "processed_at": r[6].isoformat() if r[6] and hasattr(r[6], "isoformat") else (str(r[6]) if r[6] else None),
+    }
+
+
+def list_webhook_dlq_pending(limit=50):
+    """Filas com falha ainda não reprocessadas."""
+    if not get_database_url():
+        return []
+    init_db()
+    lim = min(int(limit), 200)
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, received_at, event, error_message, retry_count, payload
+            FROM applyfy_webhook_dlq
+            WHERE processed_at IS NULL
+            ORDER BY id ASC
+            LIMIT %s;
+            """,
+            (lim,),
+        )
+        rows = cur.fetchall()
+    out = []
+    for r in rows:
+        p = r[5]
+        if isinstance(p, str):
+            p = json.loads(p) if p else {}
+        out.append(
+            {
+                "id": r[0],
+                "received_at": r[1].isoformat() if hasattr(r[1], "isoformat") else str(r[1]),
+                "event": r[2],
+                "error_message": r[3],
+                "retry_count": r[4],
+                "payload": p if isinstance(p, dict) else {},
+            }
+        )
+    return out
+
+
+def mark_webhook_dlq_processed(dlq_id):
+    if not get_database_url():
+        return
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            "UPDATE applyfy_webhook_dlq SET processed_at = NOW() WHERE id = %s AND processed_at IS NULL;",
+            (int(dlq_id),),
+        )
+
+
+def increment_webhook_dlq_retry(dlq_id):
+    if not get_database_url():
+        return
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            "UPDATE applyfy_webhook_dlq SET retry_count = retry_count + 1 WHERE id = %s;",
+            (int(dlq_id),),
+        )
+
+
+def get_last_export_run_at():
+    """Último run_at em export_runs ou None."""
+    if not get_database_url():
+        return None
+    init_db()
+    with cursor() as cur:
+        cur.execute("SELECT MAX(run_at) FROM export_runs;")
+        row = cur.fetchone()
+    return row[0] if row and row[0] else None
+
+
+def get_last_webhook_received_at():
+    """Último received_at em applyfy_transactions ou None."""
+    if not get_database_url():
+        return None
+    init_db()
+    with cursor() as cur:
+        cur.execute("SELECT MAX(received_at) FROM applyfy_transactions;")
+        row = cur.fetchone()
+    return row[0] if row and row[0] else None
+
+
+def count_webhook_dlq_pending():
+    if not get_database_url():
+        return 0
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            "SELECT COUNT(*) FROM applyfy_webhook_dlq WHERE processed_at IS NULL;"
+        )
+        row = cur.fetchone()
+    return int(row[0]) if row and row[0] is not None else 0
 
 
 def list_transactions(date_from=None, date_to=None, event=None, offer_code=None, limit=500):

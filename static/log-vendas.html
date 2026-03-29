@@ -3,111 +3,79 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#c9a227">
+  <meta name="theme-color" content="#000000">
   <title>Log de vendas | Applyfy</title>
   <link rel="manifest" href="/static/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
-  <style>
-    :root { --bg: #0a0a0b; --bg-card: #121214; --border: #1e1e22; --text: #e4e4e7; --text-muted: #71717a; --accent: #c9a227; --radius: 8px; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: 'DM Sans', monospace; background: var(--bg); color: var(--text); min-height: 100vh; font-size: 0.875rem; }
-    .wrap { max-width: 1100px; margin: 0 auto; padding: 1rem; padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); padding-bottom: max(2rem, env(safe-area-inset-bottom)); }
-    @media (max-width: 640px) { .wrap { padding: 0.75rem; } .log-box { max-height: 50vh; font-size: 0.8rem; } }
-    h1 { font-size: 1.25rem; margin: 0 0 0.35rem 0; }
-    .lead { color: var(--text-muted); margin: 0 0 1rem 0; font-size: 0.85rem; line-height: 1.45; }
-    .nav { margin-bottom: 1rem; }
-    .nav a { color: var(--accent); text-decoration: none; margin-right: 0.85rem; padding: 0.5rem 0; min-height: 44px; display: inline-flex; align-items: center; }
-    .nav a:hover { text-decoration: underline; }
-    .toolbar { display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem; flex-wrap: wrap; }
-    .toolbar label { color: var(--text-muted); display: flex; align-items: center; gap: 0.5rem; }
-    .toolbar input[type="checkbox"] { accent-color: var(--accent); }
-    .btn-job { padding: 0.5rem 1rem; border-radius: var(--radius); border: none; font-family: inherit; font-size: 0.875rem; font-weight: 600; cursor: pointer; min-height: 44px; transition: opacity 0.2s; }
-    .btn-job:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-clear { background: var(--border); color: var(--text-muted); }
-    .btn-clear:hover { background: #2a2a2e; color: var(--text); }
-    .btn-refresh { background: var(--accent); color: #0a0a0b; }
-    .btn-start { background: var(--accent); color: #0a0a0b; }
-    .btn-stop { background: #dc2626; color: #fff; }
-    .toolbar-msg { font-size: 0.8rem; color: var(--text-muted); margin-left: 0.5rem; }
-    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 1.25rem; }
-    .card-h { padding: 0.65rem 1rem; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 0.9rem; }
-    .log-box { padding: 1rem; max-height: 55vh; overflow-y: auto; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; line-height: 1.5; }
-    .log-box:empty::before { content: 'Carregando…'; color: var(--text-muted); }
-    .status { color: var(--text-muted); font-size: 0.8rem; margin-top: 0.5rem; }
-    .table-wrap { overflow: auto; max-height: 45vh; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
-    th, td { padding: 0.45rem 0.55rem; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
-    th { position: sticky; top: 0; background: #17171a; color: var(--text-muted); white-space: nowrap; }
-    td.msg { white-space: pre-wrap; word-break: break-word; max-width: 280px; }
-    .filters { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; padding: 0.65rem 1rem; border-bottom: 1px solid var(--border); }
-    .filters input { padding: 0.4rem 0.55rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-family: inherit; }
-    .badge-ok { color: #4ade80; }
-    .badge-err { color: #f87171; }
-  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/painel-theme.css">
 </head>
-<body>
-  <div class="wrap">
-    <nav class="nav">
-      <a href="/">← Painel</a>
-      <a href="/vendas">Vendas</a>
-      <a href="/log-vendas.html">Log vendas</a>
-      <a href="/log">Log saldos</a>
-      <a href="/historico">Histórico</a>
-      <a href="/transacoes">Transações</a>
-      <a href="/produtores">Produtores</a>
-      <a href="/financeiro">Financeiro</a>
-    </nav>
-    <h1>Log da exportação de vendas</h1>
-    <p class="lead">
-      Use preferencialmente <strong><code>/log-vendas.html</code></strong> se <code>/log-vendas</code> der 404 no proxy.
-      Acompanhamento ao vivo de <code>applyfy_orders_log.txt</code> e tabela <code>applyfy_import_log</code> no Postgres.
-      <strong>Iniciar processo</strong> roda <code>03_exportar_vendas.py</code> no servidor (mesmo usuário do gunicorn precisa de sessão Playwright em <code>data/sessao_applyfy.json</code>).
-    </p>
+<body data-active="/log-vendas">
+  <div class="app-shell" id="app-shell">
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
+    <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
+    <div class="main-column">
+      <header class="top-bar">
+        <div class="top-bar-inner">
+          <h1 class="page-title">Log da exportação de vendas</h1>
+        </div>
+      </header>
+      <main class="main-content">
+        <p class="text-muted" style="margin: 0 0 1rem 0; line-height: 1.5;">
+          Use preferencialmente <strong><code>/log-vendas.html</code></strong> se <code>/log-vendas</code> der 404 no proxy.
+          Acompanhamento ao vivo de <code>applyfy_orders_log.txt</code> e tabela <code>applyfy_import_log</code> no Postgres.
+          <strong>Iniciar processo</strong> roda <code>03_exportar_vendas.py</code> no servidor (mesmo usuário do gunicorn precisa de sessão Playwright em <code>data/sessao_applyfy.json</code>).
+        </p>
 
-    <div class="toolbar">
-      <button type="button" class="btn-job btn-start" id="btnStartVendas">Iniciar export</button>
-      <button type="button" class="btn-job btn-stop" id="btnStopVendas">Parar export</button>
-      <label><input type="checkbox" id="autoRefresh" checked> Atualizar texto a cada 3 s</label>
-      <button type="button" class="btn-job btn-refresh" id="btnReloadLog">Atualizar agora</button>
-      <button type="button" class="btn-job btn-clear" id="btnClear">Limpar arquivos de log</button>
-      <span class="toolbar-msg" id="jobMsg"></span>
-    </div>
-    <div class="card">
-      <div class="card-h">Saída em tempo quase real (arquivo .txt)</div>
-      <div class="log-box" id="logBox"></div>
-    </div>
+        <div class="toolbar-log">
+          <button type="button" class="btn btn-primary" id="btnStartVendas">Iniciar export</button>
+          <button type="button" class="btn btn-danger" id="btnStopVendas">Parar export</button>
+          <label><input type="checkbox" id="autoRefresh" checked> Atualizar texto a cada 3 s</label>
+          <button type="button" class="btn btn-primary" id="btnReloadLog">Atualizar agora</button>
+          <button type="button" class="btn btn-secondary" id="btnClear">Limpar arquivos de log</button>
+          <span class="toolbar-msg" id="jobMsg"></span>
+        </div>
+        <div class="card">
+          <div class="card-header">Saída em tempo quase real (arquivo .txt)</div>
+          <div class="log-box" id="logBox"></div>
+        </div>
 
-    <div class="card">
-      <div class="card-h">Histórico no banco (applyfy_import_log)</div>
-      <div class="filters">
-        <input type="text" id="filtroStatus" placeholder="Filtrar status (ex. OK, ERRO)" style="min-width:160px">
-        <button type="button" class="btn-job btn-refresh" id="btnCarregarTabela">Carregar / atualizar tabela</button>
-        <span class="toolbar-msg" id="tableMeta"></span>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Run</th>
-              <th>Pág.</th>
-              <th>Linha</th>
-              <th>Código venda</th>
-              <th>Transaction</th>
-              <th>Strategy</th>
-              <th>Status</th>
-              <th>s</th>
-              <th class="msg">Mensagem</th>
-            </tr>
-          </thead>
-          <tbody id="tbodyImport"></tbody>
-        </table>
-      </div>
+        <div class="card" style="margin-top: 1rem;">
+          <div class="card-header">Histórico no banco (applyfy_import_log)</div>
+          <div class="filtro" style="margin: 0; padding: 0.65rem 1rem; border-bottom: 1px solid rgba(63, 63, 70, 0.5);">
+            <input type="text" id="filtroStatus" placeholder="Filtrar status (ex. OK, ERRO)" style="min-width:160px">
+            <button type="button" class="btn btn-primary" id="btnCarregarTabela">Carregar / atualizar tabela</button>
+            <span class="toolbar-msg" id="tableMeta"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Run</th>
+                  <th>Pág.</th>
+                  <th>Linha</th>
+                  <th>Código venda</th>
+                  <th>Transaction</th>
+                  <th>Strategy</th>
+                  <th>Status</th>
+                  <th>s</th>
+                  <th class="msg">Mensagem</th>
+                </tr>
+              </thead>
+              <tbody id="tbodyImport"></tbody>
+            </table>
+          </div>
+        </div>
+        <p class="status" id="status"></p>
+      </main>
     </div>
-    <p class="status" id="status"></p>
   </div>
+  <script src="/painel-shell.js" defer></script>
   <script>
     var autoRefreshId = null;
     var LOG_URLS = ['/api/vendas/log?lines=500', '/api/vendas-log?lines=500'];
@@ -153,7 +121,7 @@
     function setJobMsg(msg, isError) {
       var el = document.getElementById('jobMsg');
       el.textContent = msg || '';
-      el.style.color = isError ? '#dc2626' : '';
+      el.style.color = isError ? '#f87171' : '';
     }
     function loadImportTable() {
       var st = document.getElementById('filtroStatus').value.trim();
@@ -171,7 +139,7 @@
           document.getElementById('tableMeta').textContent = 'Exibindo ' + rows.length + ' de ' + total + ' registros (DATABASE_URL).';
           var tb = document.getElementById('tbodyImport');
           if (!rows.length) {
-            tb.innerHTML = '<tr><td colspan="10" style="color:var(--text-muted);padding:1rem">Nenhum registro. Rode o export com Postgres configurado ou clique em Iniciar export.</td></tr>';
+            tb.innerHTML = '<tr><td colspan="10" class="muted" style="padding:1rem">Nenhum registro. Rode o export com Postgres configurado ou clique em Iniciar export.</td></tr>';
             return;
           }
           tb.innerHTML = rows.map(function(r) {

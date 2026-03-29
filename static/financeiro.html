@@ -3,95 +3,82 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#c9a227">
+  <meta name="theme-color" content="#000000">
   <title>Fluxo de caixa, DRE e DFC | Applyfy</title>
   <link rel="manifest" href="/static/manifest.json">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <style>
-    :root { --bg: #0a0a0b; --bg-card: #121214; --border: #1e1e22; --text: #e4e4e7; --text-muted: #71717a; --accent: #c9a227; --radius: 8px; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 1rem; }
-    h1 { font-size: 1.5rem; margin: 0 0 1rem 0; }
-    .nav { margin-bottom: 1.5rem; }
-    .nav a { color: var(--accent); text-decoration: none; margin-right: 1rem; padding: 0.5rem 0; }
-    .tabs { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; flex-wrap: wrap; }
-    .tabs button { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-card); color: var(--text); cursor: pointer; }
-    .tabs button.active { background: var(--accent); color: #0a0a0b; }
-    .tab-panel { display: none; }
-    .tab-panel.active { display: block; }
-    .filtro, .form-inline { margin-bottom: 1rem; display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
-    .filtro label, .form-inline label { color: var(--text-muted); }
-    .filtro input, .filtro select, .form-inline input, .form-inline select { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-card); color: var(--text); }
-    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 1rem; }
-    .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { padding: 0.75rem 1rem; text-align: left; border-bottom: 1px solid var(--border); }
-    th { font-weight: 600; color: var(--text-muted); }
-    th.num, .num { text-align: right; }
-    .empty { padding: 2rem; text-align: center; color: var(--text-muted); }
-    .btn { padding: 0.4rem 0.75rem; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #0a0a0b; cursor: pointer; font-size: 0.875rem; }
-    .btn-secondary { background: transparent; color: var(--accent); }
-    .btn-danger { border-color: #dc2626; background: #dc2626; color: #fff; }
-    .relatorio-block { margin-bottom: 1.5rem; }
-    .relatorio-block h3 { font-size: 1rem; color: var(--text-muted); margin: 0 0 0.5rem 0; }
-  </style>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/painel-theme.css">
 </head>
-<body>
-  <div class="wrap">
-    <nav class="nav"><a href="/">← Painel</a> <a href="/historico">Histórico</a> <a href="/evolucao">Evolução</a> <a href="/transacoes">Transações</a> <a href="/meta">Meta</a> <a href="/produtores">Produtores</a> <a href="/financeiro">Financeiro</a> <a href="/log">Log</a></nav>
-    <h1>Fluxo de caixa, DRE e DFC</h1>
-    <div class="tabs">
-      <button type="button" data-tab="categorias">Categorias</button>
-      <button type="button" data-tab="lancamentos">Lançamentos</button>
-      <button type="button" data-tab="relatorios">Relatórios</button>
-    </div>
-    <div id="panel-categorias" class="tab-panel">
-      <div class="form-inline" id="formCategoria">
-        <input type="text" id="catNome" placeholder="Nome da categoria" required>
-        <select id="catTipo"><option value="receita">Receita</option><option value="despesa">Despesa</option></select>
-        <button type="button" class="btn" id="btnSalvarCategoria">Salvar</button>
-        <button type="button" class="btn btn-secondary" id="btnCancelarCategoria" style="display:none;">Cancelar</button>
-        <input type="hidden" id="catId">
-      </div>
-      <div class="card"><div class="table-wrap"><table><thead><tr><th>Nome</th><th>Tipo</th><th>Ativa</th><th>Ações</th></tr></thead><tbody id="tbodyCategorias"></tbody></table></div></div>
-    </div>
-    <div id="panel-lancamentos" class="tab-panel">
-      <div class="filtro">
-        <label>De</label><input type="date" id="lancDateFrom">
-        <label>Até</label><input type="date" id="lancDateTo">
-        <label>Mês</label><input type="number" id="lancMes" min="1" max="12" placeholder="Mês">
-        <label>Ano</label><input type="number" id="lancAno" min="2020" max="2030" placeholder="Ano">
-        <label>Tipo</label><select id="lancTipo"><option value="">Todos</option><option value="receita">Receita</option><option value="despesa">Despesa</option></select>
-        <label>Categoria</label><select id="lancCategoria"><option value="">Todas</option></select>
-        <button type="button" class="btn" id="btnFiltroLanc">Buscar</button>
-        <button type="button" class="btn btn-secondary" id="btnNovoLanc">Novo lançamento</button>
-      </div>
-      <div class="form-inline" id="formLancamento" style="display:none;">
-        <input type="date" id="lancData" required>
-        <input type="number" id="lancValor" step="0.01" min="0" placeholder="Valor" required>
-        <select id="lancTipoForm"><option value="receita">Receita</option><option value="despesa">Despesa</option></select>
-        <select id="lancCategoriaForm"><option value="">Categoria</option></select>
-        <input type="text" id="lancDescricao" placeholder="Descrição">
-        <button type="button" class="btn" id="btnSalvarLanc">Salvar</button>
-        <button type="button" class="btn btn-secondary" id="btnCancelarLanc">Cancelar</button>
-        <input type="hidden" id="lancId">
-      </div>
-      <div class="card"><div class="table-wrap"><table><thead><tr><th>Data</th><th class="num">Valor</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Ações</th></tr></thead><tbody id="tbodyLancamentos"><tr><td colspan="6" class="empty">Use os filtros e clique em Buscar.</td></tr></tbody></table></div></div>
-    </div>
-    <div id="panel-relatorios" class="tab-panel">
-      <div class="filtro">
-        <label>De</label><input type="date" id="relDateFrom">
-        <label>Até</label><input type="date" id="relDateTo">
-        <label>Mês</label><input type="number" id="relMes" min="1" max="12">
-        <label>Ano</label><input type="number" id="relAno" min="2020" max="2030">
-        <button type="button" class="btn" id="btnRelatorio">Atualizar relatórios</button>
-      </div>
-      <div class="relatorio-block"><h3>Fluxo de Caixa</h3><div class="card"><div class="table-wrap"><table><thead><tr><th>Data</th><th class="num">Receitas</th><th class="num">Despesas</th><th class="num">Saldo</th></tr></thead><tbody id="tbodyFluxo"><tr><td colspan="4" class="empty">Defina o período e clique em Atualizar.</td></tr></tbody></table></div><p id="resumoFluxo" style="padding:1rem;margin:0;"></p></div></div>
-      <div class="relatorio-block"><h3>DRE</h3><div class="card"><table><thead><tr><th>Receitas por categoria</th><th class="num">Valor</th></tr></thead><tbody id="tbodyDreReceitas"></tbody></table><table><thead><tr><th>Despesas por categoria</th><th class="num">Valor</th></tr></thead><tbody id="tbodyDreDespesas"></tbody></table><p id="resumoDre" style="padding:1rem;margin:0;"></p></div></div>
-      <div class="relatorio-block"><h3>DFC</h3><div class="card"><table><thead><tr><th>Natureza</th><th class="num">Entradas</th><th class="num">Saídas</th><th class="num">Saldo</th></tr></thead><tbody id="tbodyDfc"></tbody></table></div></div>
+<body data-active="/financeiro">
+  <div class="app-shell" id="app-shell">
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
+    <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
+    <div class="main-column">
+      <header class="top-bar">
+        <div class="top-bar-inner">
+          <h1 class="page-title">Fluxo de caixa, DRE e DFC</h1>
+        </div>
+      </header>
+      <main class="main-content">
+        <div class="tabs">
+          <button type="button" data-tab="categorias">Categorias</button>
+          <button type="button" data-tab="lancamentos">Lançamentos</button>
+          <button type="button" data-tab="relatorios">Relatórios</button>
+        </div>
+        <div id="panel-categorias" class="tab-panel">
+          <div class="form-inline" id="formCategoria">
+            <input type="text" id="catNome" placeholder="Nome da categoria" required>
+            <select id="catTipo"><option value="receita">Receita</option><option value="despesa">Despesa</option></select>
+            <button type="button" class="btn btn-primary" id="btnSalvarCategoria">Salvar</button>
+            <button type="button" class="btn btn-secondary" id="btnCancelarCategoria" style="display:none;">Cancelar</button>
+            <input type="hidden" id="catId">
+          </div>
+          <div class="card"><div class="table-wrap flat"><table><thead><tr><th>Nome</th><th>Tipo</th><th>Ativa</th><th>Ações</th></tr></thead><tbody id="tbodyCategorias"></tbody></table></div></div>
+        </div>
+        <div id="panel-lancamentos" class="tab-panel">
+          <div class="filtro">
+            <label>De</label><input type="date" id="lancDateFrom">
+            <label>Até</label><input type="date" id="lancDateTo">
+            <label>Mês</label><input type="number" id="lancMes" min="1" max="12" placeholder="Mês">
+            <label>Ano</label><input type="number" id="lancAno" min="2020" max="2030" placeholder="Ano">
+            <label>Tipo</label><select id="lancTipo"><option value="">Todos</option><option value="receita">Receita</option><option value="despesa">Despesa</option></select>
+            <label>Categoria</label><select id="lancCategoria"><option value="">Todas</option></select>
+            <button type="button" class="btn btn-primary" id="btnFiltroLanc">Buscar</button>
+            <button type="button" class="btn btn-secondary" id="btnNovoLanc">Novo lançamento</button>
+          </div>
+          <div class="form-inline" id="formLancamento" style="display:none;">
+            <input type="date" id="lancData" required>
+            <input type="number" id="lancValor" step="0.01" min="0" placeholder="Valor" required>
+            <select id="lancTipoForm"><option value="receita">Receita</option><option value="despesa">Despesa</option></select>
+            <select id="lancCategoriaForm"><option value="">Categoria</option></select>
+            <input type="text" id="lancDescricao" placeholder="Descrição">
+            <button type="button" class="btn btn-primary" id="btnSalvarLanc">Salvar</button>
+            <button type="button" class="btn btn-secondary" id="btnCancelarLanc">Cancelar</button>
+            <input type="hidden" id="lancId">
+          </div>
+          <div class="card"><div class="table-wrap flat"><table><thead><tr><th>Data</th><th class="num">Valor</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Ações</th></tr></thead><tbody id="tbodyLancamentos"><tr><td colspan="6" class="empty">Use os filtros e clique em Buscar.</td></tr></tbody></table></div></div>
+        </div>
+        <div id="panel-relatorios" class="tab-panel">
+          <div class="filtro">
+            <label>De</label><input type="date" id="relDateFrom">
+            <label>Até</label><input type="date" id="relDateTo">
+            <label>Mês</label><input type="number" id="relMes" min="1" max="12">
+            <label>Ano</label><input type="number" id="relAno" min="2020" max="2030">
+            <button type="button" class="btn btn-primary" id="btnRelatorio">Atualizar relatórios</button>
+          </div>
+          <div class="relatorio-block"><h3>Fluxo de Caixa</h3><div class="card"><div class="table-wrap flat"><table><thead><tr><th>Data</th><th class="num">Receitas</th><th class="num">Despesas</th><th class="num">Saldo</th></tr></thead><tbody id="tbodyFluxo"><tr><td colspan="4" class="empty">Defina o período e clique em Atualizar.</td></tr></tbody></table></div><p id="resumoFluxo" class="text-muted" style="padding:1rem;margin:0;"></p></div></div>
+          <div class="relatorio-block"><h3>DRE</h3><div class="card"><div class="table-wrap flat"><table><thead><tr><th>Receitas por categoria</th><th class="num">Valor</th></tr></thead><tbody id="tbodyDreReceitas"></tbody></table></div><div class="table-wrap flat" style="margin-top:0.5rem;"><table><thead><tr><th>Despesas por categoria</th><th class="num">Valor</th></tr></thead><tbody id="tbodyDreDespesas"></tbody></table></div><p id="resumoDre" class="text-muted" style="padding:1rem;margin:0;"></p></div></div>
+          <div class="relatorio-block"><h3>DFC</h3><div class="card"><div class="table-wrap flat"><table><thead><tr><th>Natureza</th><th class="num">Entradas</th><th class="num">Saídas</th><th class="num">Saldo</th></tr></thead><tbody id="tbodyDfc"></tbody></table></div></div></div>
+        </div>
+      </main>
     </div>
   </div>
+  <script src="/painel-shell.js" defer></script>
   <script src="/static/financeiro.js"></script>
 </body>
 </html>

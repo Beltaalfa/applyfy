@@ -3,86 +3,77 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#c9a227">
+  <meta name="theme-color" content="#000000">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Evolução por produtor | Applyfy</title>
   <link rel="manifest" href="/static/manifest.json">
-  <style>
-    :root { --bg: #0a0a0b; --bg-card: #121214; --border: #1e1e22; --text: #e4e4e7; --text-muted: #71717a; --accent: #c9a227; --radius: 8px; }
-    * { box-sizing: border-box; }
-    body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0a0a0b; color: #e4e4e7; min-height: 100vh; }
-    .wrap { max-width: 1200px; margin: 0 auto; padding: 1rem; padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); padding-bottom: max(2rem, env(safe-area-inset-bottom)); }
-    @media (max-width: 640px) { .wrap { padding: 0.75rem; } h1 { font-size: 1.25rem; } .filtro input, .filtro select { min-width: 100%; min-height: 44px; } .chart-container { height: 280px; } }
-    h1 { font-size: 1.5rem; margin: 0 0 1rem 0; }
-    .nav { margin-bottom: 1.5rem; }
-    .nav a { color: var(--accent); text-decoration: none; margin-right: 1rem; padding: 0.5rem 0; min-height: 44px; display: inline-flex; align-items: center; }
-    .nav a:hover { text-decoration: underline; }
-    .filtro { margin-bottom: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
-    .filtro-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
-    .filtro label { color: var(--text-muted); }
-    .filtro input[type="text"], .filtro select { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg-card); color: var(--text); font-size: 1rem; }
-    .filtro input[type="text"] { min-width: 260px; }
-    .filtro select { min-width: 280px; }
-    .card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.5rem; margin-bottom: 1.5rem; }
-    .card h2 { font-size: 1rem; color: var(--text-muted); margin: 0 0 1rem 0; }
-    .empty { padding: 3rem; text-align: center; color: var(--text-muted); }
-    .chart-container { position: relative; height: 360px; }
-    .text-muted { color: var(--text-muted); font-size: 0.95rem; }
-    code { background: var(--bg); padding: 0.2em 0.4em; border-radius: 4px; font-size: 0.85em; }
-    .btn { padding: 0.5rem 1rem; border-radius: var(--radius); border: 1px solid var(--accent); background: var(--accent); color: var(--bg); font-family: inherit; font-size: 1rem; cursor: pointer; min-height: 44px; }
-    .btn:hover { opacity: 0.9; }
-    #producerId { min-width: 200px; }
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/painel-theme.css">
 </head>
-<body style="background:#0a0a0b;color:#e4e4e7;margin:0;min-height:100vh;">
-  <div style="background:#c9a227;color:#0a0a0b;padding:8px 1rem;font-weight:600;text-align:center;">Evolução por produtor — ApplyFy</div>
-  <div class="wrap" style="max-width:1200px;margin:0 auto;padding:1rem;">
-    <nav class="nav" style="margin-bottom:1.5rem;"><a href="/" style="color:#c9a227;text-decoration:none;">← Painel</a> <a href="/historico" style="color:#c9a227;text-decoration:none;">Histórico por data</a> <a href="/evolucao" style="color:#c9a227;text-decoration:none;">Evolução</a> <a href="/transacoes" style="color:#c9a227;text-decoration:none;">Transações</a> <a href="/meta" style="color:#c9a227;text-decoration:none;">Meta</a> <a href="/produtores" style="color:#c9a227;text-decoration:none;">Produtores</a> <a href="/financeiro" style="color:#c9a227;text-decoration:none;">Financeiro</a> <a href="/log" style="color:#c9a227;text-decoration:none;">Log</a></nav>
-    <h1 style="font-size:1.5rem;margin:0 0 1rem 0;">Evolução dos saldos por produtor</h1>
-    <p class="text-muted" style="margin:0 0 1rem 0;">Os dados de evolução vêm do histórico no Postgres. As <strong>taxas do produtor</strong> vêm da API ApplyFy: <code>GET https://app.applyfy.com.br/api/v1/gateway/admin/producer/<span id="apiIdPlaceholder">{id}</span></code> — use o ID do produtor na URL.</p>
-    <div class="filtro">
-      <div class="filtro-row">
-        <label for="busca">Filtrar por nome ou email:</label>
-        <input type="text" id="busca" placeholder="Digite parte do nome ou email...">
-      </div>
-      <div class="filtro-row">
-        <label for="produtor">Produtor:</label>
-        <select id="produtor">
-          <option value="">Carregando…</option>
-        </select>
-      </div>
-      <div class="filtro-row">
-        <label for="coluna">Coluna a exibir no gráfico:</label>
-        <select id="coluna">
-          <option value="saldo_disponivel">Saldo disponível</option>
-          <option value="saldo_pendente">Saldo pendente</option>
-          <option value="saldo_retido">Saldo retido</option>
-          <option value="total_sacado">Total sacado</option>
-          <option value="vendas_liquidas">Vendas líquidas</option>
-          <option value="indicacao">Indicação</option>
-          <option value="outros">Outros</option>
-        </select>
-      </div>
-      <p class="empty" id="msgProdutores" style="margin:0;"></p>
+<body data-active="/evolucao">
+  <div class="app-shell" id="app-shell">
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
+    <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
+    <div class="main-column">
+      <header class="top-bar">
+        <div class="top-bar-inner">
+          <h1 class="page-title">Evolução dos saldos por produtor</h1>
+        </div>
+      </header>
+      <main class="main-content">
+        <p class="text-muted" style="margin:0 0 1rem 0;">Os dados de evolução vêm do histórico no Postgres. As <strong>taxas do produtor</strong> vêm da API ApplyFy: <code>GET https://app.applyfy.com.br/api/v1/gateway/admin/producer/<span id="apiIdPlaceholder">{id}</span></code> — use o ID do produtor na URL.</p>
+        <div class="filtro" style="flex-direction:column;align-items:stretch;">
+          <div class="filtro-row">
+            <label for="busca">Filtrar por nome ou email:</label>
+            <input type="text" id="busca" placeholder="Digite parte do nome ou email...">
+          </div>
+          <div class="filtro-row">
+            <label for="produtor">Produtor:</label>
+            <select id="produtor">
+              <option value="">Carregando…</option>
+            </select>
+          </div>
+          <div class="filtro-row">
+            <label for="coluna">Coluna a exibir no gráfico:</label>
+            <select id="coluna">
+              <option value="saldo_disponivel">Saldo disponível</option>
+              <option value="saldo_pendente">Saldo pendente</option>
+              <option value="saldo_retido">Saldo retido</option>
+              <option value="total_sacado">Total sacado</option>
+              <option value="vendas_liquidas">Vendas líquidas</option>
+              <option value="indicacao">Indicação</option>
+              <option value="outros">Outros</option>
+            </select>
+          </div>
+          <p class="empty" id="msgProdutores" style="margin:0;"></p>
+        </div>
+        <div class="card card-padded" id="cardChart" style="display: none;">
+          <h2 class="content-h2" id="tituloChart">Evolução ao longo do tempo</h2>
+          <div class="chart-container"><canvas id="chart"></canvas></div>
+        </div>
+        <div class="card card-padded" id="cardTaxas" style="display: none;">
+          <h2 class="content-h2">Taxas do produtor (API ApplyFy)</h2>
+          <p class="text-muted" style="margin:0 0 0.75rem 0;">API: <code>GET /api/v1/gateway/admin/producer/<span id="apiIdExample">ID</span></code> — o painel chama <code>GET /api/produtor/<span id="apiIdExample2">ID</span>/taxas</code> (com <code>?refresh=1</code> para atualizar da ApplyFy).</p>
+          <div class="filtro-row" style="margin-bottom: 0.75rem;">
+            <label for="producerId">ID do produtor (obrigatório para buscar na API):</label>
+            <input type="text" id="producerId" placeholder="Ex.: oe2kuk5s2i (do webhook PRODUCER_CREATED ou painel ApplyFy)" style="min-width:200px;">
+            <button type="button" id="btnBuscarTaxas" class="btn btn-primary">Buscar taxas na API</button>
+          </div>
+          <p id="taxasMsg" class="empty" style="margin: 0; padding: 1rem 0;"></p>
+          <pre id="taxasJson" class="api-result" style="display: none; max-height: 280px;"></pre>
+          <p id="taxasFetchedAt" class="text-xs-muted" style="margin: 0.5rem 0 0 0;"></p>
+        </div>
+        <div class="empty" id="empty">Selecione um produtor para ver a evolução gráfica.</div>
+      </main>
     </div>
-    <div class="card" id="cardChart" style="display: none;">
-      <h2 id="tituloChart">Evolução ao longo do tempo</h2>
-      <div class="chart-container"><canvas id="chart"></canvas></div>
-    </div>
-    <div class="card" id="cardTaxas" style="display: none;">
-      <h2>Taxas do produtor (API ApplyFy)</h2>
-      <p class="text-muted" style="margin:0 0 0.75rem 0;">API: <code>GET /api/v1/gateway/admin/producer/<span id="apiIdExample">ID</span></code> — o painel chama <code>GET /api/produtor/<span id="apiIdExample2">ID</span>/taxas</code> (com <code>?refresh=1</code> para atualizar da ApplyFy).</p>
-      <div class="filtro-row" style="margin-bottom: 0.75rem;">
-        <label for="producerId">ID do produtor (obrigatório para buscar na API):</label>
-        <input type="text" id="producerId" placeholder="Ex.: oe2kuk5s2i (do webhook PRODUCER_CREATED ou painel ApplyFy)">
-        <button type="button" id="btnBuscarTaxas" class="btn">Buscar taxas na API</button>
-      </div>
-      <p id="taxasMsg" class="empty" style="margin: 0; padding: 1rem 0;"></p>
-      <pre id="taxasJson" style="display: none; background: var(--bg); padding: 1rem; border-radius: var(--radius); overflow: auto; font-size: 0.85rem; max-height: 280px;"></pre>
-      <p id="taxasFetchedAt" style="font-size: 0.85rem; color: var(--text-muted); margin: 0.5rem 0 0 0;"></p>
-    </div>
-    <div class="empty" id="empty" style="padding:2rem;text-align:center;color:#71717a;">Selecione um produtor para ver a evolução gráfica.</div>
   </div>
+  <script src="/painel-shell.js" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     document.body.classList.add('loaded');
@@ -90,6 +81,15 @@
     var listaProdutores = [];
     var dadosEvolucaoAtuais = [];
     var colunaLabels = { saldo_pendente: 'Saldo pendente', saldo_retido: 'Saldo retido', saldo_disponivel: 'Saldo disponível', total_sacado: 'Total sacado', vendas_liquidas: 'Vendas líquidas', indicacao: 'Indicação', outros: 'Outros' };
+    var chartTooltip = {
+      backgroundColor: '#18181b',
+      borderColor: '#3f3f46',
+      borderWidth: 1,
+      cornerRadius: 8,
+      titleColor: '#fafafa',
+      bodyColor: '#e4e4e7',
+      padding: 10
+    };
     function atualizarChart() {
       var dados = dadosEvolucaoAtuais;
       if (!dados.length) return;
@@ -98,8 +98,8 @@
       var oneDataset = {
         label: colunaLabels[colKey] || colKey,
         data: dados.map(function(x) { return x[colKey] != null ? Number(x[colKey]) : 0; }),
-        borderColor: '#c9a227',
-        backgroundColor: 'rgba(201, 162, 39, 0.15)',
+        borderColor: '#3b82f6',
+        backgroundColor: 'rgba(59, 130, 246, 0.12)',
         fill: true,
         tension: 0.2
       };
@@ -111,10 +111,23 @@
         options: {
           responsive: true,
           maintainAspectRatio: false,
-          plugins: { legend: { position: 'top' } },
+          plugins: {
+            legend: {
+              position: 'top',
+              labels: { color: '#a1a1aa', font: { family: 'Inter, sans-serif' } }
+            },
+            tooltip: chartTooltip
+          },
           scales: {
-            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#71717a' } },
-            x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#71717a', maxRotation: 45 } }
+            y: {
+              beginAtZero: true,
+              grid: { color: 'rgba(255,255,255,0.06)' },
+              ticks: { color: '#a1a1aa' }
+            },
+            x: {
+              grid: { color: 'rgba(255,255,255,0.06)' },
+              ticks: { color: '#a1a1aa', maxRotation: 45 }
+            }
           }
         }
       });
