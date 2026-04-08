@@ -117,17 +117,20 @@ body {
   z-index: 40;
   width: var(--sidebar-w);
   height: 100vh;
+  height: 100dvh;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   background: #000000;
   border-right: 1px solid var(--zinc-800);
   padding: 1rem 0.75rem;
-  overflow-y: auto;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  overflow: hidden;
   transition: transform 0.2s ease;
 }
 
 .sidebar-brand {
+  flex-shrink: 0;
   font-size: 0.875rem;
   font-weight: 600;
   letter-spacing: -0.02em;
@@ -141,9 +144,15 @@ body {
 }
 
 .sidebar-nav {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
+  overflow-y: auto;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 0.25rem;
 }
 
 .sidebar-link {

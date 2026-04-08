@@ -75,6 +75,7 @@ with sync_playwright() as p:
 
     pagina = 1
     inicio_geral = time.perf_counter()
+    pagina_anterior_fp = None
     log_txt("INÍCIO da exportação Applyfy")
 
     try:
@@ -92,6 +93,19 @@ with sync_playwright() as p:
             nome_antes = es._get_primeiro_nome_da_lista(page, row_selector)
             rows = page.locator(row_selector)
             total_linhas = rows.count()
+            try:
+                if total_linhas > 0:
+                    first = es._cell_locator(rows.first, row_selector).inner_text(timeout=es.SEL_TIMEOUT)
+                    last = es._cell_locator(rows.nth(total_linhas - 1), row_selector).inner_text(timeout=es.SEL_TIMEOUT)
+                    fp_atual = f"{total_linhas}|{(first.splitlines()[0] if first else '').strip()}|{(last.splitlines()[0] if last else '').strip()}"
+                else:
+                    fp_atual = "empty"
+            except Exception:
+                fp_atual = "unknown"
+
+            if pagina_anterior_fp is not None and fp_atual == pagina_anterior_fp:
+                log_txt(f"ℹ Página {pagina} repetida ({fp_atual}). Encerrando para evitar loop.")
+                break
 
             if total_linhas == 0:
                 log_txt("ℹ Nenhuma linha na tabela. Encerrando.")
@@ -213,9 +227,9 @@ with sync_playwright() as p:
 
             ok = es._clicar_proxima(page, nome_antes, row_selector)
             if not ok:
-                log_txt("ℹ Botão Próxima indisponível (fim).")
-                break
+                log_txt("ℹ Botão Próxima indisponível; tentando avançar por parâmetro page.")
 
+            pagina_anterior_fp = fp_atual
             pagina += 1
 
     finally:

@@ -7,7 +7,7 @@ import subprocess
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
-from flask import Flask, request, jsonify, send_file, send_from_directory
+from flask import Flask, Response, g, redirect, request, jsonify, send_file, send_from_directory
 from dotenv import load_dotenv
 
 import config
@@ -15,11 +15,96 @@ import db
 import waha_client
 from applyfy_repository import list_applyfy_vendas_import_log
 
+import auth_hub
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 app.config["JSON_AS_ASCII"] = False
+_mb = (os.environ.get("APPLYFY_MAX_UPLOAD_MB") or "35").strip() or "35"
+app.config["MAX_CONTENT_LENGTH"] = int(_mb) * 1024 * 1024
+app.secret_key = (os.environ.get("FLASK_SECRET_KEY") or os.environ.get("SECRET_KEY") or "").strip() or os.urandom(32).hex()
+_sc = (os.environ.get("SESSION_COOKIE_SECURE") or "").strip().lower() in ("1", "true", "yes", "on")
+app.config["SESSION_COOKIE_SECURE"] = _sc
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = (os.environ.get("SESSION_COOKIE_SAMESITE") or "Lax").strip() or "Lax"
+
+if (os.environ.get("APPLYFY_TRUST_PROXY") or os.environ.get("TRUST_PROXY") or "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+):
+    from werkzeug.middleware.proxy_fix import ProxyFix
+
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+
+@app.before_request
+def _hub_auth_gate():
+    if not auth_hub.auth_enabled():
+        return None
+    path = request.path
+    if not (os.environ.get("HUB_LOGIN_URL") or "").strip():
+        if path.startswith("/api/"):
+            return jsonify({"error": "HUB_LOGIN_URL não configurado (obrigatório com APPLYFY_AUTH_ENABLED)."}), 503
+        return (
+            "<p>Configure <code>HUB_LOGIN_URL</code> no servidor (com <code>APPLYFY_AUTH_ENABLED=1</code>).</p>",
+            503,
+            {"Content-Type": "text/html; charset=utf-8"},
+        )
+    if auth_hub.is_public_path(path):
+        return None
+    if not auth_hub.try_cookie_jwt(request):
+        if getattr(g, "hub_auth_reject", None) == "project":
+            msg = "Sem acesso a este painel Applyfy para a empresa/projeto da sua sessão."
+            if path.startswith("/api/"):
+                return jsonify({"error": "forbidden", "message": msg}), 403
+            return Response(
+                f"<!DOCTYPE html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><title>Acesso negado</title></head>"
+                f"<body style=\"font-family:sans-serif;max-width:32rem;margin:3rem auto;padding:1rem;\">"
+                f"<h1>Acesso negado</h1><p>{msg}</p>"
+                f"<p><a href=\"{auth_hub.hub_logout_url()}\">Voltar ao Hub</a></p></body></html>",
+                403,
+                mimetype="text/html; charset=utf-8",
+            )
+        if path.startswith("/api/"):
+            return jsonify(
+                {"error": "unauthorized", "message": "Sessão ou cookie JWT do hub necessário"}
+            ), 401
+        return redirect(auth_hub.hub_login_url(auth_hub.effective_return_url()))
+    needed = auth_hub.required_permissions_for_path(path)
+    if needed and not auth_hub.session_has_permission(*needed):
+        if path.startswith("/api/"):
+            return jsonify({"error": "forbidden", "message": "Permissão insuficiente para este recurso"}), 403
+        return redirect(auth_hub.hub_login_url(auth_hub.effective_return_url()))
+    return None
+
+
+@app.route("/auth/callback")
+def hub_auth_callback():
+    next_raw = (request.args.get("next") or request.args.get("callbackUrl") or "").strip()
+    target = auth_hub.sanitize_redirect_target(next_raw or None)
+    code = (request.args.get("code") or "").strip()
+    if code:
+        token = auth_hub.exchange_code_for_token(code)
+        if token and auth_hub.apply_access_token(token):
+            return redirect(target)
+    if auth_hub.try_cookie_jwt(request):
+        return redirect(target)
+    return redirect(auth_hub.hub_login_url(auth_hub.effective_return_url()))
+
+
+@app.route("/auth/logout")
+def hub_auth_logout():
+    auth_hub.clear_hub_session()
+    return redirect(auth_hub.hub_logout_url())
+
+
+@app.route("/api/me")
+def api_me():
+    return jsonify(auth_hub.hub_me_payload())
 
 
 def _persist_applyfy_webhook(payload: dict, request_id_header: str = "") -> tuple[str, str | None]:
@@ -121,12 +206,20 @@ def _admin_token_ok() -> bool:
     return q == expected
 
 
+def _admin_or_hub_ok() -> bool:
+    if _admin_token_ok():
+        return True
+    if auth_hub.auth_enabled() and auth_hub.session_has_permission("applyfy.admin"):
+        return True
+    return False
+
+
 @app.route("/api/admin/waha-test", methods=["POST"])
 def api_admin_waha_test():
     """Teste WAHA; requer APPLYFY_ADMIN_TOKEN no header X-Applyfy-Admin-Token ou JSON/query token."""
-    if not os.environ.get("APPLYFY_ADMIN_TOKEN", "").strip():
+    if not os.environ.get("APPLYFY_ADMIN_TOKEN", "").strip() and not auth_hub.auth_enabled():
         return jsonify({"ok": False, "error": "APPLYFY_ADMIN_TOKEN não configurado no servidor."}), 503
-    if not _admin_token_ok():
+    if not _admin_or_hub_ok():
         return jsonify({"ok": False, "error": "Unauthorized"}), 401
     ok, err = waha_client.send_text("Applyfy: teste WAHA (painel / API admin)")
     if ok:
@@ -219,9 +312,9 @@ def api_integracao_status():
 
 @app.route("/api/admin/webhook-dlq", methods=["GET"])
 def api_admin_webhook_dlq():
-    if not os.environ.get("APPLYFY_ADMIN_TOKEN", "").strip():
+    if not os.environ.get("APPLYFY_ADMIN_TOKEN", "").strip() and not auth_hub.auth_enabled():
         return jsonify({"error": "APPLYFY_ADMIN_TOKEN não configurado."}), 503
-    if not _admin_token_ok():
+    if not _admin_or_hub_ok():
         return jsonify({"error": "Unauthorized"}), 401
     limit = request.args.get("limit", 50, type=int) or 50
     return jsonify({"items": db.list_webhook_dlq_pending(limit=min(limit, 200))})
@@ -229,9 +322,9 @@ def api_admin_webhook_dlq():
 
 @app.route("/api/admin/webhook-dlq/retry", methods=["POST"])
 def api_admin_webhook_dlq_retry():
-    if not os.environ.get("APPLYFY_ADMIN_TOKEN", "").strip():
+    if not os.environ.get("APPLYFY_ADMIN_TOKEN", "").strip() and not auth_hub.auth_enabled():
         return jsonify({"error": "APPLYFY_ADMIN_TOKEN não configurado."}), 503
-    if not _admin_token_ok():
+    if not _admin_or_hub_ok():
         return jsonify({"error": "Unauthorized"}), 401
     body = request.get_json(silent=True) or {}
     dlq_id = body.get("id")
@@ -809,6 +902,92 @@ def api_financeiro_relatorio_dfc():
     return jsonify(db.relatorio_dfc(date_from=date_from, date_to=date_to, mes=mes, ano=ano))
 
 
+@app.route("/api/financeiro/ofx/upload", methods=["POST"])
+def api_financeiro_ofx_upload():
+    if "file" not in request.files:
+        return jsonify({"error": "Envie o ficheiro no campo multipart «file»."}), 400
+    f = request.files["file"]
+    raw = f.read()
+    if not raw:
+        return jsonify({"error": "Ficheiro vazio."}), 400
+    name = (f.filename or "").lower()
+    try:
+        if name.endswith(".csv"):
+            out = db.import_extrato_nubank_csv_bytes(raw, f.filename or "extrato.csv")
+            return jsonify(out)
+        if name.endswith(".ofx") or name.endswith(".qfx"):
+            out = db.import_ofx_bytes(raw, f.filename or "extrato.ofx")
+            return jsonify(out)
+        return jsonify({"error": "Use .ofx, .qfx ou CSV Nubank."}), 400
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 503
+    except Exception as e:
+        return jsonify({"error": f"Falha ao importar: {e!s}"}), 400
+
+
+@app.route("/api/financeiro/extrato/contas", methods=["GET"])
+def api_financeiro_extrato_contas():
+    return jsonify({"contas": db.list_ofx_contas()})
+
+
+@app.route("/api/financeiro/extrato/resumo", methods=["GET"])
+def api_financeiro_extrato_resumo():
+    conta = request.args.get("conta_ref") or request.args.get("conta")
+    return jsonify(db.resumo_conciliacao_extrato(conta_ref=conta))
+
+
+@app.route("/api/financeiro/extrato", methods=["GET"])
+def api_financeiro_extrato_list():
+    conta = request.args.get("conta_ref") or request.args.get("conta")
+    date_from = request.args.get("date_from") or request.args.get("data_de")
+    date_to = request.args.get("date_to") or request.args.get("data_ate")
+    pend = request.args.get("pendente")
+    pendente = None
+    if pend and str(pend).lower() in ("1", "true", "sim", "s"):
+        pendente = True
+    elif pend and str(pend).lower() in ("0", "false", "nao", "n"):
+        pendente = False
+    limit = request.args.get("limit", 500, type=int) or 500
+    return jsonify(
+        {
+            "linhas": db.list_extrato_linhas(
+                conta_ref=conta,
+                date_from=date_from,
+                date_to=date_to,
+                pendente=pendente,
+                limit=limit,
+            )
+        }
+    )
+
+
+@app.route("/api/financeiro/extrato/<int:id>/sugestoes", methods=["GET"])
+def api_financeiro_extrato_sugestoes(id):
+    janela = request.args.get("janela_dias", 7, type=int) or 7
+    lim = request.args.get("limit", 10, type=int) or 10
+    return jsonify({"sugestoes": db.sugestoes_conciliacao_extrato(id, janela_dias=janela, limit=lim)})
+
+
+@app.route("/api/financeiro/extrato/<int:id>/conciliar", methods=["POST"])
+def api_financeiro_extrato_conciliar(id):
+    d = request.get_json() or {}
+    lid = d.get("lancamento_id")
+    if lid is None:
+        return jsonify({"error": "lancamento_id obrigatório"}), 400
+    if not db.conciliar_extrato_linha(id, int(lid)):
+        return jsonify({"error": "Não foi possível conciliar."}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/api/financeiro/extrato/<int:id>/desconciliar", methods=["POST"])
+def api_financeiro_extrato_desconciliar(id):
+    if not db.desconciliar_extrato_linha(id):
+        return jsonify({"error": "Linha não encontrada."}), 404
+    return jsonify({"ok": True})
+
+
 @app.route("/health")
 def health():
     return "ok", 200
@@ -916,6 +1095,50 @@ def meta_page():
     return send_from_directory(app.static_folder, "meta.html")
 
 
+@app.route("/comercial")
+@app.route("/comercial/")
+def comercial_page():
+    return send_from_directory(app.static_folder, "comercial.html")
+
+
+@app.route("/api/comercial/carteira", methods=["GET"])
+def api_comercial_carteira_get():
+    """Mapa produtor (email) → vendedor para a tela Comercial."""
+    if not db.get_database_url():
+        return jsonify({"assignments": {}, "items": [], "db": False})
+    try:
+        items = db.list_producer_vendedor()
+        assignments = {i["producer_email"]: i["vendedor_nome"] for i in items}
+        return jsonify({"assignments": assignments, "items": items, "db": True})
+    except Exception as e:
+        app.logger.exception("api_comercial_carteira_get")
+        return jsonify({"error": str(e)[:200]}), 500
+
+
+@app.route("/api/comercial/carteira", methods=["PUT"])
+def api_comercial_carteira_put():
+    """Atribui ou remove vendedor (nome vazio remove)."""
+    if not db.get_database_url():
+        return jsonify({"error": "DATABASE_URL não configurado"}), 503
+    data = request.get_json(silent=True) or {}
+    email = data.get("producer_email")
+    if email is None or (isinstance(email, str) and not email.strip()):
+        return jsonify({"error": "producer_email obrigatório"}), 400
+    nome = data.get("vendedor_nome")
+    if nome is not None and not isinstance(nome, str):
+        nome = str(nome)
+    try:
+        ok = db.upsert_producer_vendedor(email, nome)
+        if not ok:
+            return jsonify({"error": "Email de produtor inválido"}), 400
+        key = (email or "").strip().lower()
+        trimmed = (nome or "").strip()[:200]
+        return jsonify({"ok": True, "producer_email": key, "vendedor_nome": trimmed})
+    except Exception as e:
+        app.logger.exception("api_comercial_carteira_put")
+        return jsonify({"error": str(e)[:200]}), 500
+
+
 @app.route("/financeiro")
 @app.route("/financeiro/")
 def financeiro_page():
@@ -923,6 +1146,8 @@ def financeiro_page():
         os.path.join(BASE_DIR, "static"),
         "financeiro.html",
         mimetype="text/html; charset=utf-8",
+        max_age=0,
+        conditional=True,
     )
 
 

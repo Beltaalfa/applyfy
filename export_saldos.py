@@ -287,6 +287,22 @@ def _get_primeiro_nome_da_lista(page, row_selector: str = "table tbody tr") -> s
         return ""
 
 
+def _pagina_fingerprint(page, row_selector: str) -> str:
+    """Assinatura simples da página para detectar repetição de paginação."""
+    try:
+        rows = page.locator(row_selector)
+        total = rows.count()
+        if total == 0:
+            return "empty"
+        first = _cell_locator(rows.first, row_selector).inner_text(timeout=SEL_TIMEOUT)
+        last = _cell_locator(rows.nth(total - 1), row_selector).inner_text(timeout=SEL_TIMEOUT)
+        first_line = (first.split("\n")[0] if first else "").strip()
+        last_line = (last.split("\n")[0] if last else "").strip()
+        return f"{total}|{first_line}|{last_line}"
+    except Exception:
+        return "unknown"
+
+
 def _goto_with_retry(page, url, max_retries=3):
     """Faz page.goto com retry em caso de erro de rede (ex.: ERR_NETWORK_CHANGED)."""
     last_err = None
@@ -339,12 +355,20 @@ get_primeiro_nome_da_lista = _get_primeiro_nome_da_lista
 
 def _load_checkpoint():
     """
-    Retorna (run_at, pagina, linha) se checkpoint válido para hoje; senão (None, 1, 0).
+    Retorna (run_at, pagina, linha) se o checkpoint existir e for recente o suficiente; senão (None, 1, 0).
     linha é 0-based, próxima a processar.
+
+    Idade máxima do run_at no checkpoint: APPLYFY_EXPORT_CHECKPOINT_MAX_AGE_DAYS (default 1).
+    Ex.: default 1 = aceita hoje e ontem; use 0 só para o mesmo dia civil; use 7 para até uma semana.
     """
     path = getattr(config, "EXPORT_CHECKPOINT", None)
     if not path or not os.path.isfile(path):
         return None, 1, 0
+    try:
+        raw_max = (os.environ.get("APPLYFY_EXPORT_CHECKPOINT_MAX_AGE_DAYS") or "1").strip() or "1"
+        max_age_days = max(0, int(raw_max))
+    except ValueError:
+        max_age_days = 1
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -357,7 +381,16 @@ def _load_checkpoint():
         if run_at.tzinfo:
             run_at = run_at.replace(tzinfo=None)
         today = datetime.now().date()
-        if run_at.date() != today:
+        cp_date = run_at.date()
+        age_days = (today - cp_date).days
+        if age_days < 0:
+            _log_txt("ℹ Checkpoint ignorado (run_at no futuro).")
+            return None, 1, 0
+        if age_days > max_age_days:
+            _log_txt(
+                f"ℹ Checkpoint ignorado (export de {cp_date.isoformat()}, há {age_days}d; "
+                f"máx permitido {max_age_days}d — ajuste APPLYFY_EXPORT_CHECKPOINT_MAX_AGE_DAYS ou apague export_checkpoint.json)."
+            )
             return None, 1, 0
         return run_at, pagina, linha
     except Exception:
@@ -391,20 +424,37 @@ def run_export(session_path=None, save_to_disk=True):
     Executa a exportação. session_path default: config.SESSION_FILE.
     Retorna (resultados: list[dict], log_rows: list[dict], run_at: datetime).
     Alimenta o Postgres a cada produtor processado (run_at fixo no início).
-    Se existir checkpoint do mesmo dia, retoma de (pagina, linha).
+    Se existir checkpoint recente (ver APPLYFY_EXPORT_CHECKPOINT_MAX_AGE_DAYS), retoma de (pagina, linha).
     """
     session_path = session_path or config.SESSION_FILE
     cp_run_at, start_pagina, start_linha = _load_checkpoint()
-    today = datetime.now().date()
-    if cp_run_at is not None and cp_run_at.date() == today:
-        run_at = cp_run_at
-        _log_txt(f"▶ Retomando exportação de página {start_pagina}, linha {start_linha + 1} (run_at={run_at.isoformat()})")
-    else:
-        run_at = datetime.now()
-        start_pagina, start_linha = 1, 0
     resultados = []
     log_rows = []
     ok_count = timeout_count = erro_count = 0
+    if cp_run_at is not None:
+        run_at = cp_run_at
+        _log_txt(f"▶ Retomando exportação de página {start_pagina}, linha {start_linha + 1} (run_at={run_at.isoformat()})")
+        if save_to_disk:
+            if os.path.isfile(config.OUT_CSV):
+                try:
+                    df_prev = pd.read_csv(config.OUT_CSV, sep=";", encoding="utf-8-sig")
+                    resultados = df_prev.to_dict("records")
+                    _log_txt(f"▶ CSV anterior carregado: {len(resultados)} linhas ({config.OUT_CSV})")
+                except Exception as e:
+                    _log_txt(f"⚠ Não foi possível carregar CSV anterior: {e}")
+            if os.path.isfile(config.LOG_CSV):
+                try:
+                    df_log = pd.read_csv(config.LOG_CSV, sep=";", encoding="utf-8-sig")
+                    log_rows = df_log.to_dict("records")
+                    ok_count = sum(1 for r in log_rows if str(r.get("status", "")).strip().upper() == "OK")
+                    timeout_count = sum(1 for r in log_rows if "TIMEOUT" in str(r.get("status", "")).upper())
+                    erro_count = sum(1 for r in log_rows if str(r.get("status", "")).strip().upper() == "ERRO")
+                    _log_txt(f"▶ Log CSV anterior carregado: {len(log_rows)} linhas")
+                except Exception as e:
+                    _log_txt(f"⚠ Não foi possível carregar log CSV anterior: {e}")
+    else:
+        run_at = datetime.now()
+        start_pagina, start_linha = 1, 0
 
     _log_txt("Abrindo browser para exportação (aguarde ~30s)...")
     headed = os.environ.get("APPLYFY_HEADED", "").strip().lower() in ("1", "true", "yes")
@@ -431,6 +481,7 @@ def run_export(session_path=None, save_to_disk=True):
 
         pagina = start_pagina
         inicio_geral = time.perf_counter()
+        pagina_anterior_fp = None
         _log_txt("INÍCIO da exportação Applyfy")
         if db.DATABASE_URL:
             u = db._db_user_from_url()
@@ -453,6 +504,11 @@ def run_export(session_path=None, save_to_disk=True):
                 nome_antes = _get_primeiro_nome_da_lista(page, row_selector)
                 rows = page.locator(row_selector)
                 total_linhas = rows.count()
+                fp_atual = _pagina_fingerprint(page, row_selector)
+                if pagina_anterior_fp is not None and fp_atual == pagina_anterior_fp:
+                    _log_txt(f"ℹ Página {pagina} repetida ({fp_atual}). Encerrando para evitar loop.")
+                    _clear_checkpoint()
+                    break
 
                 if total_linhas == 0:
                     _log_txt("ℹ Nenhuma linha na tabela. Encerrando.")
@@ -554,9 +610,8 @@ def run_export(session_path=None, save_to_disk=True):
 
                 ok = _clicar_proxima(page, nome_antes, row_selector)
                 if not ok:
-                    _log_txt("ℹ Botão Próxima indisponível (fim).")
-                    _clear_checkpoint()
-                    break
+                    _log_txt("ℹ Botão Próxima indisponível; tentando avançar por parâmetro page.")
+                pagina_anterior_fp = fp_atual
                 pagina += 1
 
         finally:

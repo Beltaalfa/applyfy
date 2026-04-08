@@ -6,7 +6,11 @@
     lancamentos: "/api/financeiro/lancamentos",
     fluxo: "/api/financeiro/relatorios/fluxo-caixa",
     dre: "/api/financeiro/relatorios/dre",
-    dfc: "/api/financeiro/relatorios/dfc"
+    dfc: "/api/financeiro/relatorios/dfc",
+    ofxUpload: "/api/financeiro/ofx/upload",
+    extrato: "/api/financeiro/extrato",
+    extratoContas: "/api/financeiro/extrato/contas",
+    extratoResumo: "/api/financeiro/extrato/resumo"
   };
 
   function qs(sel, el) { return (el || document).querySelector(sel); }
@@ -22,6 +26,7 @@
     if (name === "categorias") loadCategorias();
     if (name === "lancamentos") { fillCategoriaSelects(); loadLancamentos(); }
     if (name === "relatorios") loadRelatorios();
+    if (name === "ofx") { fillOfxContas(); loadExtratoResumo(); loadExtrato(); }
   }
 
   function params(obj) {
@@ -246,6 +251,143 @@
   }
 
   qs("#btnRelatorio").addEventListener("click", loadRelatorios);
+
+  function fillOfxContas() {
+    var sel = qs("#ofxConta");
+    if (!sel) return;
+    var cur = sel.value;
+    fetch(API.extratoContas).then(function (r) { return r.json(); }).then(function (d) {
+      var contas = d.contas || [];
+      sel.innerHTML = "<option value=\"\">Todas as contas</option>" + contas.map(function (c) {
+        return "<option value=\"" + String(c).replace(/"/g, "&quot;") + "\">" + String(c).replace(/</g, "&lt;") + "</option>";
+      }).join("");
+      if (cur && [].slice.call(sel.options).some(function (o) { return o.value === cur; })) sel.value = cur;
+    }).catch(function () {});
+  }
+
+  function loadExtratoResumo() {
+    var el = qs("#ofxResumo");
+    if (!el) return;
+    var conta = qs("#ofxConta") && qs("#ofxConta").value;
+    var q = conta ? "?conta_ref=" + encodeURIComponent(conta) : "";
+    fetch(API.extratoResumo + q).then(function (r) { return r.json(); }).then(function (x) {
+      if (x.error) { el.textContent = ""; return; }
+      el.textContent = "Pendentes: " + (x.pendentes || 0) + " | Conciliadas: " + (x.conciliadas || 0) + " | Total: " + (x.total || 0);
+    }).catch(function () { el.textContent = ""; });
+  }
+
+  function loadExtrato() {
+    var tb = qs("#tbodyOfx");
+    if (!tb) return;
+    var msg = qs("#ofxMsg");
+    tb.innerHTML = "<tr><td colspan=\"7\" class=\"empty\">Carregando…</td></tr>";
+    var p = { limit: 20000 };
+    if (qs("#ofxConta") && qs("#ofxConta").value) p.conta_ref = qs("#ofxConta").value;
+    if (qs("#ofxSoPendente") && qs("#ofxSoPendente").checked) p.pendente = "1";
+    var q = params(p);
+    fetch(API.extrato + q).then(function (r) {
+      return r.text().then(function (text) {
+        var d = {};
+        try { d = text ? JSON.parse(text) : {}; } catch (e) { d = { _raw: text }; }
+        return { ok: r.ok, status: r.status, d: d };
+      });
+    }).then(function (o) {
+      if (!o.ok) {
+        tb.innerHTML = "<tr><td colspan=\"7\" class=\"empty\">Erro ao listar extrato (HTTP " + o.status + ").</td></tr>";
+        if (msg) msg.textContent = (o.d.error || o.d._raw || "").toString().slice(0, 300) || "Confirme DATABASE_URL e reinicie o painel.";
+        return;
+      }
+      var list = o.d.linhas || [];
+      if (!list.length) {
+        tb.innerHTML = "<tr><td colspan=\"7\" class=\"empty\">Sem linhas. Envie OFX/CSV ou desmarque «Só pendentes». Sem Postgres não grava dados.</td></tr>";
+        if (msg && !msg.textContent) msg.textContent = "";
+        return;
+      }
+      tb.innerHTML = list.map(function (L) {
+        var desc = (L.memo || L.payee || "—").replace(/</g, "&lt;");
+        var conc = L.conciliado_lancamento_id ? ("Lanç. #" + L.conciliado_lancamento_id) : "—";
+        var btns = L.conciliado_lancamento_id
+          ? "<button type=\"button\" class=\"btn btn-secondary btn-ofx-des\" data-id=\"" + L.id + "\">Desvincular</button>"
+          : "<button type=\"button\" class=\"btn btn-secondary btn-ofx-sug\" data-id=\"" + L.id + "\">Sugestões</button> <button type=\"button\" class=\"btn btn-primary btn-ofx-conc\" data-id=\"" + L.id + "\">Vincular…</button>";
+        return "<tr><td>" + L.data_mov + "</td><td class=\"num\">" + Number(L.valor).toFixed(2) + "</td><td>" + L.tipo + "</td><td>" + desc + "</td><td style=\"font-size:0.85rem;\">" + String(L.conta_ref || "").replace(/</g, "&lt;") + "</td><td>" + conc + "</td><td>" + btns + "</td></tr>";
+      }).join("");
+      tb.querySelectorAll(".btn-ofx-sug").forEach(function (b) {
+        b.addEventListener("click", function () {
+          var id = Number(this.getAttribute("data-id"));
+          fetch("/api/financeiro/extrato/" + id + "/sugestoes").then(function (r) { return r.json(); }).then(function (x) {
+            var s = x.sugestoes || [];
+            if (!s.length) { alert("Nenhuma sugestão."); return; }
+            alert(s.map(function (z) { return "#" + z.lancamento_id + " | " + z.data + " | " + z.valor; }).join("\n"));
+          });
+        });
+      });
+      tb.querySelectorAll(".btn-ofx-conc").forEach(function (b) {
+        b.addEventListener("click", function () {
+          var id = Number(this.getAttribute("data-id"));
+          var lid = window.prompt("ID do lançamento:");
+          if (lid == null || String(lid).trim() === "") return;
+          fetch("/api/financeiro/extrato/" + id + "/conciliar", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ lancamento_id: parseInt(lid, 10) })
+          }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); }).then(function (o) {
+            if (!o.ok) { alert(o.j.error || "Erro"); return; }
+            loadExtrato();
+            loadExtratoResumo();
+          });
+        });
+      });
+      tb.querySelectorAll(".btn-ofx-des").forEach(function (b) {
+        b.addEventListener("click", function () {
+          var id = Number(this.getAttribute("data-id"));
+          fetch("/api/financeiro/extrato/" + id + "/desconciliar", { method: "POST" }).then(function () {
+            loadExtrato();
+            loadExtratoResumo();
+          });
+        });
+      });
+    }).catch(function (e) {
+      tb.innerHTML = "<tr><td colspan=\"7\" class=\"empty\">Erro de rede.</td></tr>";
+      if (msg) msg.textContent = e.message || "";
+    });
+  }
+
+  var btnOfxUpload = qs("#btnOfxUpload");
+  if (btnOfxUpload) {
+    btnOfxUpload.addEventListener("click", function () {
+      var inp = qs("#ofxFile");
+      var msg = qs("#ofxMsg");
+      if (!inp || !inp.files || !inp.files[0]) { if (msg) msg.textContent = "Escolha um ficheiro."; return; }
+      var fd = new FormData();
+      fd.append("file", inp.files[0]);
+      if (msg) msg.textContent = "A enviar… (ficheiros grandes: aguarde 1–2 min)";
+      fetch(API.ofxUpload, { method: "POST", body: fd }).then(function (r) {
+        return r.text().then(function (text) {
+          var j = {};
+          try { j = text ? JSON.parse(text) : {}; } catch (e) { j = { error: text ? text.slice(0, 200) : r.statusText }; }
+          return { ok: r.ok, status: r.status, j: j };
+        });
+      }).then(function (o) {
+        if (!o.ok) {
+          var hint = o.status === 413 ? " Aumente client_max_body_size no Nginx (ex. 32m)." : "";
+          if (msg) msg.textContent = (o.j.error || "HTTP " + o.status) + hint;
+          return;
+        }
+        if (o.j.error) { if (msg) msg.textContent = o.j.error; return; }
+        if (msg) msg.textContent = (o.j.formato === "nubank_csv" ? "[CSV] " : "[OFX] ") + "Novas: " + (o.j.linhas_inseridas || 0) + "; duplicadas: " + (o.j.linhas_duplicadas_ignoradas || 0);
+        inp.value = "";
+        fillOfxContas();
+        loadExtratoResumo();
+        loadExtrato();
+      }).catch(function (e) { if (msg) msg.textContent = "Falha: " + (e.message || ""); });
+    });
+  }
+  var btnOfxLoad = qs("#btnOfxLoad");
+  if (btnOfxLoad) btnOfxLoad.addEventListener("click", function () { loadExtratoResumo(); loadExtrato(); });
+  var ofxConta = qs("#ofxConta");
+  if (ofxConta) ofxConta.addEventListener("change", function () { loadExtratoResumo(); loadExtrato(); });
+  var ofxSoPendente = qs("#ofxSoPendente");
+  if (ofxSoPendente) ofxSoPendente.addEventListener("change", function () { loadExtrato(); });
 
   // Inicializacao
   showTab("categorias");

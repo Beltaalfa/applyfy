@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Comercial | Applyfy</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/painel-theme.css">
+  <style>
+    .comercial-filtros { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center; margin-bottom: 1rem; }
+    .comercial-filtros label { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; }
+    .comercial-filtros input[type="text"] { min-width: 12rem; padding: 0.35rem 0.5rem; border-radius: 6px; border: 1px solid var(--border, #333); background: var(--input-bg, #1a1a1a); color: inherit; }
+    .warn-banner { padding: 0.6rem 0.85rem; border-radius: 8px; background: rgba(234, 179, 8, 0.15); border: 1px solid rgba(234, 179, 8, 0.4); font-size: 0.9rem; margin-bottom: 1rem; }
+    .vendedor-cell { white-space: nowrap; }
+    .vendedor-cell .vendedor-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; max-width: 22rem; }
+    .vendedor-cell .vendedor-input { flex: 1; min-width: 6rem; padding: 0.3rem 0.45rem; border-radius: 6px; border: 1px solid var(--border, #333); background: var(--input-bg, #1a1a1a); color: inherit; font-size: 0.85rem; }
+    .vendedor-cell .btn-guardar { padding: 0.3rem 0.55rem; font-size: 0.8rem; }
+  </style>
+</head>
+<body data-active="/comercial">
+  <div class="app-shell" id="app-shell">
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
+    <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
+    <div class="main-column">
+      <header class="top-bar">
+        <div class="top-bar-inner">
+          <h1 class="page-title">Comercial</h1>
+        </div>
+      </header>
+      <main class="main-content">
+        <div class="page-header">
+          <div>
+            <p class="last-run" id="lastRun">Carregando…</p>
+          </div>
+          <div class="actions">
+            <a href="/api/exportar?formato=xlsx" class="btn btn-primary" download>Exportar XLSX</a>
+            <a href="/api/exportar?formato=csv" class="btn btn-secondary" download>Exportar CSV</a>
+          </div>
+        </div>
+        <p id="noDbWarning" class="warn-banner" hidden>Sem PostgreSQL: as atribuições de vendedor ficam só neste navegador (localStorage). Com <code>DATABASE_URL</code> a equipa partilha a mesma carteira.</p>
+        <div class="comercial-filtros card" style="padding:0.75rem 1rem;">
+          <label>Meu nome (filtro)
+            <input type="text" id="meuNome" autocomplete="name" placeholder="Ex.: Maria" />
+          </label>
+          <label>
+            <input type="checkbox" id="somenteMinhaCarteira" />
+            Apenas minha carteira
+          </label>
+        </div>
+        <div class="card">
+          <div class="table-wrap flat">
+            <table>
+              <thead>
+                <tr>
+                  <th data-col="Nome" data-type="text">Nome <span class="sort-icon">↕</span></th>
+                  <th data-col="Email" data-type="text">Email <span class="sort-icon">↕</span></th>
+                  <th data-col="vendedor" data-type="text">Vendedor <span class="sort-icon">↕</span></th>
+                  <th data-col="Vendas líquidas" data-type="num" class="num">Vendas líquidas <span class="sort-icon">↕</span></th>
+                  <th class="num">Meta</th>
+                  <th data-col="_pct" data-type="num" class="num">% meta <span class="sort-icon">↕</span></th>
+                </tr>
+              </thead>
+              <tbody id="tbody">
+                <tr><td colspan="6" class="empty">Carregando…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="/static/painel-shell.js" defer></script>
+  <script>
+    var dadosAtuais = [];
+    var dadosFonte = [];
+    var sortCol = null;
+    var sortAsc = true;
+    var sortTypeStored = 'text';
+    var META_VALOR = 10000;
+    var assignments = {};
+    var useServerDb = false;
+    var STORAGE_KEY_CARTEIRA = 'applyfy_comercial_carteira';
+    var STORAGE_KEY_MEU_NOME = 'applyfy_comercial_meu_nome';
+
+    function loadMetaValor() {
+      return fetch('/api/settings')
+        .then(function(r) { return r.json(); })
+        .then(function(s) {
+          var v = Number(s.meta_vendas_liquidas);
+          if (!isNaN(v) && v >= 0) META_VALOR = v;
+        })
+        .catch(function() { });
+    }
+
+    function emailKey(email) {
+      return String(email || '').trim().toLowerCase();
+    }
+
+    function getLocalCarteira() {
+      try {
+        var s = localStorage.getItem(STORAGE_KEY_CARTEIRA);
+        var raw = s ? JSON.parse(s) : {};
+        var out = {};
+        Object.keys(raw).forEach(function(k) { out[emailKey(k)] = raw[k]; });
+        return out;
+      } catch (e) { return {}; }
+    }
+
+    function setLocalCarteira(email, nome) {
+      var o = getLocalCarteira();
+      var k = emailKey(email);
+      if (!k) return;
+      if (nome) o[k] = nome; else delete o[k];
+      try { localStorage.setItem(STORAGE_KEY_CARTEIRA, JSON.stringify(o)); } catch (e) {}
+    }
+
+    function loadMeuNome() {
+      try {
+        var v = localStorage.getItem(STORAGE_KEY_MEU_NOME);
+        if (v) document.getElementById('meuNome').value = v;
+      } catch (e) {}
+    }
+
+    function saveMeuNome() {
+      try {
+        var v = (document.getElementById('meuNome').value || '').trim();
+        if (v) localStorage.setItem(STORAGE_KEY_MEU_NOME, v);
+        else localStorage.removeItem(STORAGE_KEY_MEU_NOME);
+      } catch (e) {}
+    }
+
+    function fmtMoney(v) {
+      if (v == null || v === '' || isNaN(Number(v))) return '–';
+      return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(v));
+    }
+
+    function esc(s) {
+      if (s == null) return '';
+      return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function pctClass(pct) {
+      if (pct >= 100) return 'pct-ok';
+      if (pct >= 50) return 'pct-warn';
+      return 'pct-low';
+    }
+
+    function vendedorCellHtml(email, current) {
+      return '<td class="vendedor-cell"><div class="vendedor-row">' +
+        '<input type="text" class="vendedor-input" data-email="' + esc(email) + '" value="' + esc(current || '') + '" placeholder="Nome" />' +
+        '<button type="button" class="btn btn-secondary btn-guardar vendedor-save" data-email="' + esc(email) + '">Guardar</button>' +
+        '</div></td>';
+    }
+
+    function rowToHtml(row) {
+      var vl = Number(row['Vendas líquidas']) || 0;
+      var pct = META_VALOR > 0 ? (vl / META_VALOR) * 100 : 0;
+      row._pct = pct;
+      var pctStr = pct >= 100 ? '100%+' : (pct.toFixed(1).replace('.', ',') + '%');
+      return '<tr>' +
+        '<td>' + esc(row.Nome || '–') + '</td>' +
+        '<td>' + esc(row.Email || '–') + '</td>' +
+        vendedorCellHtml(row.Email, row.vendedor) +
+        '<td class="num">' + fmtMoney(row['Vendas líquidas']) + '</td>' +
+        '<td class="num">' + fmtMoney(META_VALOR) + '</td>' +
+        '<td class="num ' + pctClass(pct) + '">' + pctStr + '</td>' +
+      '</tr>';
+    }
+
+    function renderTable(rows) {
+      var tbody = document.getElementById('tbody');
+      tbody.innerHTML = rows.length ? rows.map(rowToHtml).join('') : '<tr><td colspan="6" class="empty">Nenhum dado.</td></tr>';
+    }
+
+    function applyCarteiraFilter() {
+      var only = document.getElementById('somenteMinhaCarteira').checked;
+      var meu = (document.getElementById('meuNome').value || '').trim().toLowerCase();
+      dadosFonte.forEach(function(r) {
+        r.vendedor = assignments[emailKey(r.Email)] || '';
+      });
+      if (only && meu) {
+        dadosAtuais = dadosFonte.filter(function(r) {
+          return (r.vendedor || '').trim().toLowerCase() === meu;
+        });
+      } else {
+        dadosAtuais = dadosFonte.slice();
+      }
+      if (sortCol) resortWithoutToggle();
+      else renderTable(dadosAtuais);
+    }
+
+    function resortWithoutToggle() {
+      var col = sortCol;
+      var type = sortTypeStored;
+      var mult = sortAsc ? 1 : -1;
+      var sorted = dadosAtuais.slice().sort(function(a, b) {
+        var va = col === 'vendedor' ? (a.vendedor || '') : (a[col] !== undefined ? a[col] : '');
+        var vb = col === 'vendedor' ? (b.vendedor || '') : (b[col] !== undefined ? b[col] : '');
+        if (type === 'num' || col === '_pct') {
+          va = Number(va) || 0;
+          vb = Number(vb) || 0;
+          return mult * (va - vb);
+        }
+        va = (va || '').toString().toLowerCase();
+        vb = (vb || '').toString().toLowerCase();
+        return mult * va.localeCompare(vb);
+      });
+      dadosAtuais = sorted;
+      document.querySelectorAll('th').forEach(function(th){
+        th.classList.toggle('sorted', th.getAttribute('data-col') === col);
+        var icon = th.querySelector('.sort-icon');
+        if (icon) icon.textContent = th.getAttribute('data-col') === col ? (sortAsc ? '↑' : '↓') : '↕';
+      });
+      renderTable(dadosAtuais);
+    }
+
+    function sortData(col, type) {
+      if (sortCol === col) sortAsc = !sortAsc;
+      else { sortCol = col; sortAsc = true; }
+      sortTypeStored = type || 'text';
+      var mult = sortAsc ? 1 : -1;
+      var sorted = dadosAtuais.slice().sort(function(a, b) {
+        var va = col === 'vendedor' ? (a.vendedor || '') : (a[col] !== undefined ? a[col] : '');
+        var vb = col === 'vendedor' ? (b.vendedor || '') : (b[col] !== undefined ? b[col] : '');
+        if (type === 'num' || col === '_pct') {
+          va = Number(va) || 0;
+          vb = Number(vb) || 0;
+          return mult * (va - vb);
+        }
+        va = (va || '').toString().toLowerCase();
+        vb = (vb || '').toString().toLowerCase();
+        return mult * va.localeCompare(vb);
+      });
+      dadosAtuais = sorted;
+      document.querySelectorAll('th').forEach(function(th){
+        th.classList.toggle('sorted', th.getAttribute('data-col') === col);
+        var icon = th.querySelector('.sort-icon');
+        if (icon) icon.textContent = th.getAttribute('data-col') === col ? (sortAsc ? '↑' : '↓') : '↕';
+      });
+      renderTable(dadosAtuais);
+    }
+
+    function renderRelatorio(data) {
+      var lastRun = document.getElementById('lastRun');
+      if (!data.resultados || data.resultados.length === 0) {
+        dadosFonte = [];
+        dadosAtuais = [];
+        renderTable([]);
+        lastRun.textContent = data.run_at ? 'Última atualização: ' + new Date(data.run_at).toLocaleString('pt-BR') : 'Nenhuma exportação ainda.';
+        return;
+      }
+      dadosFonte = data.resultados.map(function(r) {
+        var o = Object.assign({}, r);
+        o.vendedor = assignments[emailKey(o.Email)] || '';
+        var vl = Number(o['Vendas líquidas']) || 0;
+        o._pct = META_VALOR > 0 ? (vl / META_VALOR) * 100 : 0;
+        return o;
+      });
+      lastRun.textContent = 'Última atualização: ' + (data.run_at ? new Date(data.run_at).toLocaleString('pt-BR') : '–') + ' · ' + data.total + ' produtores · Meta: ' + fmtMoney(META_VALOR);
+      sortCol = null;
+      sortAsc = true;
+      document.querySelectorAll('th').forEach(function(th){ th.classList.remove('sorted'); });
+      document.querySelectorAll('th .sort-icon').forEach(function(icon){ icon.textContent = '↕'; });
+      applyCarteiraFilter();
+    }
+
+    function persistVendedor(email, nome, done) {
+      var k = emailKey(email);
+      if (!k) { if (done) done(false); return; }
+      if (useServerDb) {
+        fetch('/api/comercial/carteira', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ producer_email: email, vendedor_nome: nome })
+        })
+          .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, j: j }; }); })
+          .then(function(x) {
+            if (x.ok) {
+              if (nome) assignments[k] = nome; else delete assignments[k];
+              for (var i = 0; i < dadosFonte.length; i++) {
+                if (emailKey(dadosFonte[i].Email) === k) { dadosFonte[i].vendedor = nome || ''; break; }
+              }
+              applyCarteiraFilter();
+              if (done) done(true);
+            } else {
+              alert(x.j && x.j.error ? x.j.error : 'Erro ao guardar');
+              if (done) done(false);
+            }
+          })
+          .catch(function() {
+            alert('Erro de rede ao guardar');
+            if (done) done(false);
+          });
+      } else {
+        setLocalCarteira(email, nome);
+        if (nome) assignments[k] = nome; else delete assignments[k];
+        for (var j = 0; j < dadosFonte.length; j++) {
+          if (emailKey(dadosFonte[j].Email) === k) { dadosFonte[j].vendedor = nome || ''; break; }
+        }
+        applyCarteiraFilter();
+        if (done) done(true);
+      }
+    }
+
+    document.querySelector('thead').addEventListener('click', function(e) {
+      var th = e.target.closest('th[data-col]');
+      if (th) sortData(th.getAttribute('data-col'), th.getAttribute('data-type') || 'text');
+    });
+
+    document.getElementById('tbody').addEventListener('click', function(e) {
+      var btn = e.target.closest('.vendedor-save');
+      if (!btn) return;
+      var email = btn.getAttribute('data-email');
+      var tr = btn.closest('tr');
+      var inp = tr ? tr.querySelector('.vendedor-input') : null;
+      var nome = inp ? (inp.value || '').trim() : '';
+      persistVendedor(email, nome);
+    });
+
+    document.getElementById('somenteMinhaCarteira').addEventListener('change', function() {
+      saveMeuNome();
+      applyCarteiraFilter();
+    });
+
+    document.getElementById('meuNome').addEventListener('change', function() { saveMeuNome(); });
+    document.getElementById('meuNome').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { saveMeuNome(); applyCarteiraFilter(); }
+    });
+
+    loadMeuNome();
+
+    Promise.all([
+      loadMetaValor(),
+      fetch('/api/comercial/carteira').then(function(r) { return r.json(); }),
+      fetch('/api/ultimo-relatorio').then(function(r) { return r.json(); })
+    ])
+      .then(function(parts) {
+        var carteira = parts[1];
+        var rel = parts[2];
+        useServerDb = !!(carteira && carteira.db);
+        document.getElementById('noDbWarning').hidden = useServerDb;
+        if (useServerDb && carteira.assignments) {
+          assignments = Object.assign({}, carteira.assignments);
+        } else {
+          assignments = Object.assign({}, getLocalCarteira());
+        }
+        renderRelatorio(rel);
+      })
+      .catch(function() {
+        document.getElementById('tbody').innerHTML = '<tr><td colspan="6" class="empty">Erro ao carregar dados.</td></tr>';
+        document.getElementById('lastRun').textContent = 'Erro ao carregar.';
+      });
+  </script>
+</body>
+</html>

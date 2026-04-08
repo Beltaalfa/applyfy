@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/painel-theme.css">
+  <link rel="stylesheet" href="/static/painel-theme.css">
 </head>
 <body data-active="/financeiro">
   <div class="app-shell" id="app-shell">
@@ -28,6 +28,7 @@
         <div class="tabs">
           <button type="button" data-tab="categorias">Categorias</button>
           <button type="button" data-tab="lancamentos">Lançamentos</button>
+          <button type="button" data-tab="ofx">Extrato OFX / CSV</button>
           <button type="button" data-tab="relatorios">Relatórios</button>
         </div>
         <div id="panel-categorias" class="tab-panel">
@@ -63,6 +64,19 @@
           </div>
           <div class="card"><div class="table-wrap flat"><table><thead><tr><th>Data</th><th class="num">Valor</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Ações</th></tr></thead><tbody id="tbodyLancamentos"><tr><td colspan="6" class="empty">Use os filtros e clique em Buscar.</td></tr></tbody></table></div></div>
         </div>
+        <div id="panel-ofx" class="tab-panel">
+          <p class="text-muted">Envie <strong>OFX/QFX</strong> ou CSV Nubank. Crédito no banco ↔ receita no lançamento; débito ↔ despesa. Exige <strong>PostgreSQL</strong> (<code>DATABASE_URL</code> no .env).</p>
+          <div class="form-inline" style="margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
+            <input type="file" id="ofxFile" accept=".ofx,.qfx,.csv">
+            <button type="button" class="btn btn-primary" id="btnOfxUpload">Enviar extrato</button>
+            <select id="ofxConta"><option value="">Todas as contas</option></select>
+            <label style="display:inline-flex;align-items:center;gap:0.25rem;"><input type="checkbox" id="ofxSoPendente" checked> Só pendentes</label>
+            <button type="button" class="btn btn-secondary" id="btnOfxLoad">Atualizar lista</button>
+            <span id="ofxResumo" class="text-muted"></span>
+          </div>
+          <p id="ofxMsg" class="text-muted" style="min-height:1.25rem;"></p>
+          <div class="card"><div class="table-wrap flat"><table><thead><tr><th>Data</th><th class="num">Valor</th><th>Tipo</th><th>Descrição</th><th>Conta</th><th>Conciliação</th><th>Ações</th></tr></thead><tbody id="tbodyOfx"></tbody></table></div></div>
+        </div>
         <div id="panel-relatorios" class="tab-panel">
           <div class="filtro">
             <label>De</label><input type="date" id="relDateFrom">
@@ -78,7 +92,7 @@
       </main>
     </div>
   </div>
-  <script src="/painel-shell.js" defer></script>
+  <script src="/static/painel-shell.js" defer></script>
   <script src="/static/financeiro.js"></script>
 </body>
 </html>

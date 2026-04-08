@@ -11,3 +11,21 @@ perfil_applyfy/
 *.log
 .env.local
 env.sh
+
+# Runtime / local / migração (não versionar no GitHub)
+.cache/
+.pki/
+chromium_profile_applyfy/
+*_export_*.lock
+applyfy_log*
+applyfy_orders_log*
+debug_*.*
+login_debug*.png
+login_*_ok.png
+orders_list_fail_*.png
+orders_snapshot.*
+orders_stopped_*
+NU_*.csv
+*.ofx
+produtores.txt
+produtores_saldos.*

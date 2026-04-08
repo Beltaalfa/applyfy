@@ -13,6 +13,11 @@ BASE_URL = os.environ.get("APPLYFY_API_BASE", "https://app.applyfy.com.br/api/v1
 PUBLIC_KEY = os.environ.get("APPLYFY_PUBLIC_KEY", "")
 SECRET_KEY = os.environ.get("APPLYFY_SECRET_KEY", "")
 TIMEOUT = int(os.environ.get("APPLYFY_API_TIMEOUT", "10"))
+# Cloudflare pode bloquear requests sem User-Agent de browser (Error 1010).
+_DEFAULT_UA = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
 
 
 def _headers():
@@ -21,6 +26,7 @@ def _headers():
         "Accept": "application/json",
         "x-public-key": PUBLIC_KEY or "",
         "x-secret-key": SECRET_KEY or "",
+        "User-Agent": (os.environ.get("APPLYFY_API_USER_AGENT") or "").strip() or _DEFAULT_UA,
     }
 
 

@@ -1,5 +1,5 @@
 /* Service Worker Applyfy Painel - PWA installável */
-const CACHE = 'applyfy-v2';
+const CACHE = 'applyfy-v3';
 
 self.addEventListener('install', function(e) {
   self.skipWaiting();

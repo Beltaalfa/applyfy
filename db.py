@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """Conexão e helpers para PostgreSQL (export runs e último relatório)."""
+import hashlib
 import os
 import json
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 import config
 
@@ -142,6 +143,16 @@ def init_db():
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
         """)
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS applyfy_producer_vendedor (
+                producer_email TEXT PRIMARY KEY,
+                vendedor_nome TEXT NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_applyfy_producer_vendedor_nome ON applyfy_producer_vendedor (vendedor_nome);"
+        )
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS financeiro_categorias (
@@ -170,6 +181,54 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_financeiro_lancamentos_data ON financeiro_lancamentos(data);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_financeiro_lancamentos_tipo ON financeiro_lancamentos(tipo);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_financeiro_lancamentos_categoria ON financeiro_lancamentos(categoria_id);")
+
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS banco_ofx_imports (
+                id SERIAL PRIMARY KEY,
+                imported_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                filename TEXT,
+                conta_ref TEXT NOT NULL,
+                bank_id TEXT,
+                account_id TEXT,
+                currency TEXT,
+                balance_end NUMERIC(16,2),
+                balance_date DATE,
+                periodo_inicio DATE,
+                periodo_fim DATE,
+                movimentos_count INT NOT NULL DEFAULT 0
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_banco_ofx_imports_conta ON banco_ofx_imports (conta_ref);")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS banco_extrato_linhas (
+                id SERIAL PRIMARY KEY,
+                import_id INT NOT NULL REFERENCES banco_ofx_imports(id) ON DELETE CASCADE,
+                conta_ref TEXT NOT NULL,
+                fitid TEXT,
+                dedupe_key TEXT NOT NULL,
+                data_mov DATE NOT NULL,
+                valor NUMERIC(16,2) NOT NULL,
+                memo TEXT,
+                payee TEXT,
+                tipo TEXT NOT NULL CHECK (tipo IN ('credito','debito')),
+                conciliado_lancamento_id INT REFERENCES financeiro_lancamentos(id) ON DELETE SET NULL,
+                conciliado_em TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                CONSTRAINT uq_banco_extrato_conta_dedupe UNIQUE (conta_ref, dedupe_key)
+            );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_banco_extrato_data ON banco_extrato_linhas (data_mov);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_banco_extrato_conta ON banco_extrato_linhas (conta_ref);")
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_banco_extrato_pendente ON banco_extrato_linhas (conta_ref) WHERE conciliado_lancamento_id IS NULL;"
+        )
+        cur.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_banco_extrato_lancamento_unico
+            ON banco_extrato_linhas (conciliado_lancamento_id)
+            WHERE conciliado_lancamento_id IS NOT NULL;
+            """
+        )
 
         cur.execute("SELECT 1 FROM financeiro_categorias LIMIT 1")
         if cur.fetchone() is None:
@@ -684,6 +743,69 @@ def get_producer_by_offer_code(offer_code):
     return {"producer_id": row[0], "producer_name": row[1]}
 
 
+def _normalize_producer_email(email: str | None) -> str:
+    return (email or "").strip().lower()
+
+
+def list_producer_vendedor():
+    """
+    Carteira comercial: atribuição vendedor → produtor (email do export).
+    Retorna lista de { producer_email, vendedor_nome, updated_at }.
+    """
+    if not get_database_url():
+        return []
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT producer_email, vendedor_nome, updated_at
+            FROM applyfy_producer_vendedor
+            ORDER BY lower(vendedor_nome), producer_email;
+            """
+        )
+        rows = cur.fetchall()
+    out = []
+    for r in rows:
+        ts = r[2]
+        out.append(
+            {
+                "producer_email": r[0],
+                "vendedor_nome": r[1],
+                "updated_at": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
+            }
+        )
+    return out
+
+
+def upsert_producer_vendedor(producer_email, vendedor_nome):
+    """
+    Define o vendedor do produtor. vendedor_nome vazio remove a linha.
+    Retorna True se alterou a BD, False se sem URL ou email inválido.
+    """
+    if not get_database_url():
+        return False
+    key = _normalize_producer_email(producer_email)
+    if not key:
+        return False
+    nome = (vendedor_nome or "").strip()[:200]
+    init_db()
+    with cursor() as cur:
+        if not nome:
+            cur.execute("DELETE FROM applyfy_producer_vendedor WHERE producer_email = %s;", (key,))
+            return True
+        cur.execute(
+            """
+            INSERT INTO applyfy_producer_vendedor (producer_email, vendedor_nome, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (producer_email) DO UPDATE SET
+                vendedor_nome = EXCLUDED.vendedor_nome,
+                updated_at = NOW();
+            """,
+            (key, nome),
+        )
+    return True
+
+
 def list_producer_created_events(limit=200):
     """Lista eventos PRODUCER_CREATED para sincronizar offer_code -> produtor."""
     if not get_database_url():
@@ -896,7 +1018,7 @@ def create_lancamento(data, valor, tipo, categoria_id=None, descricao=None, natu
         return None
     init_db()
     cat_id = int(categoria_id) if categoria_id else None
-    nat = naturaleza_dfc if naturaleza_dfc in ("operacional", "investimento", "financiamento") else None
+    nat = natureza_dfc if natureza_dfc in ("operacional", "investimento", "financiamento") else None
     with cursor() as cur:
         cur.execute("INSERT INTO financeiro_lancamentos (data, valor, tipo, categoria_id, descricao, natureza_dfc, updated_at) VALUES (%s, %s, %s, %s, %s, %s, NOW()) RETURNING id", (data, val, tipo, cat_id, (descricao or "").strip() or None, nat))
         row = cur.fetchone()
@@ -1100,3 +1222,390 @@ def list_applyfy_vendas(
             item[c] = v
         out.append(item)
     return {"rows": out, "total": total}
+
+
+def _extrato_dedupe_key(conta_ref: str, tx: dict) -> str:
+    fid = tx.get("fitid")
+    if fid:
+        return ("fitid:" + str(fid))[:180]
+    dm = tx["data_mov"]
+    ds = dm.isoformat() if hasattr(dm, "isoformat") else str(dm)[:10]
+    raw = f"{conta_ref}|{ds}|{tx['valor']}|{tx.get('memo') or ''}|{tx.get('payee') or ''}"
+    return "h:" + hashlib.sha256(raw.encode("utf-8", errors="replace")).hexdigest()[:48]
+
+
+def _parse_date_arg(d):
+    if d is None or d == "":
+        return None
+    if hasattr(d, "isoformat"):
+        return d if isinstance(d, date) else d.date() if hasattr(d, "date") else None
+    s = str(d)[:10]
+    try:
+        y, m, day = int(s[0:4]), int(s[5:7]), int(s[8:10])
+        return date(y, m, day)
+    except (ValueError, TypeError):
+        return None
+
+
+def _bulk_insert_banco_extrato_linhas(imp_id: int, conta_ref: str, txs: list) -> tuple[int, int]:
+    from psycopg2.extras import execute_values
+
+    rows = []
+    for tx in txs:
+        dm = tx["data_mov"]
+        if not hasattr(dm, "year"):
+            dm = _parse_date_arg(dm) or date.today()
+        dk = _extrato_dedupe_key(conta_ref, {**tx, "data_mov": dm})
+        rows.append(
+            (
+                imp_id,
+                conta_ref,
+                tx.get("fitid"),
+                dk,
+                dm,
+                tx["valor"],
+                tx.get("memo"),
+                tx.get("payee"),
+                tx["tipo"],
+            )
+        )
+    inserted = 0
+    skipped = 0
+    chunk_size = 800
+    for i in range(0, len(rows), chunk_size):
+        chunk = rows[i : i + chunk_size]
+        with cursor() as cur:
+            execute_values(
+                cur,
+                """
+                INSERT INTO banco_extrato_linhas (
+                    import_id, conta_ref, fitid, dedupe_key, data_mov, valor, memo, payee, tipo
+                ) VALUES %s
+                ON CONFLICT (conta_ref, dedupe_key) DO NOTHING
+                """,
+                chunk,
+            )
+            n_ins = cur.rowcount
+            inserted += n_ins
+            skipped += len(chunk) - n_ins
+    return inserted, skipped
+
+
+def _import_one_extrato_block(
+    filename: str,
+    conta_ref: str,
+    txs: list,
+    bank_id=None,
+    account_id=None,
+    currency: str = "BRL",
+    balance_end=None,
+    balance_date=None,
+    periodo_inicio=None,
+    periodo_fim=None,
+):
+    if not get_database_url():
+        raise RuntimeError("DATABASE_URL não definido.")
+    conta_ref = (conta_ref or "sem_conta")[:200]
+    txs = txs or []
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO banco_ofx_imports (
+                filename, conta_ref, bank_id, account_id, currency,
+                balance_end, balance_date, periodo_inicio, periodo_fim, movimentos_count
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id;
+            """,
+            (
+                (filename or "")[:255] or None,
+                conta_ref,
+                bank_id,
+                account_id,
+                (currency or "BRL")[:8],
+                balance_end,
+                balance_date,
+                periodo_inicio,
+                periodo_fim,
+                len(txs),
+            ),
+        )
+        imp_id = cur.fetchone()[0]
+    inserted, skipped = _bulk_insert_banco_extrato_linhas(imp_id, conta_ref, txs)
+    return imp_id, inserted, skipped, len(txs)
+
+
+def import_ofx_bytes(data: bytes, filename: str = "extrato.ofx"):
+    if not get_database_url():
+        raise RuntimeError("DATABASE_URL não definido.")
+    from ofx_import import parse_ofx_bytes as _parse
+
+    blocks = _parse(data)
+    if not blocks:
+        raise ValueError("OFX sem contas reconhecidas.")
+    total_ins = 0
+    total_skip = 0
+    imports_out = []
+    for b in blocks:
+        txs = b.get("transacoes") or []
+        conta_ref = (b.get("conta_ref") or "sem_conta")[:200]
+        imp_id, ins, sk, n = _import_one_extrato_block(
+            filename=filename,
+            conta_ref=conta_ref,
+            txs=txs,
+            bank_id=b.get("bank_id"),
+            account_id=b.get("account_id"),
+            currency=b.get("currency") or "BRL",
+            balance_end=b.get("balance_end"),
+            balance_date=_parse_date_arg(b.get("balance_date")),
+            periodo_inicio=_parse_date_arg(b.get("periodo_inicio")),
+            periodo_fim=_parse_date_arg(b.get("periodo_fim")),
+        )
+        total_ins += ins
+        total_skip += sk
+        imports_out.append({"import_id": imp_id, "conta_ref": conta_ref, "movimentos_no_arquivo": n})
+    return {
+        "ok": True,
+        "formato": "ofx",
+        "contas": len(blocks),
+        "linhas_inseridas": total_ins,
+        "linhas_duplicadas_ignoradas": total_skip,
+        "imports": imports_out,
+    }
+
+
+def import_extrato_nubank_csv_bytes(data: bytes, filename: str = "extrato.csv"):
+    if not get_database_url():
+        raise RuntimeError("DATABASE_URL não definido.")
+    from extrato_csv_import import parse_nubank_csv_bytes
+
+    block = parse_nubank_csv_bytes(data, filename=filename or "extrato.csv")
+    if not block:
+        raise ValueError("CSV não reconhecido como Nubank (Data, Valor, Identificador, Descrição).")
+    conta_ref = (block.get("conta_ref") or "nubank|csv")[:200]
+    txs = block.get("transacoes") or []
+    imp_id, ins, sk, n = _import_one_extrato_block(
+        filename=filename or "extrato.csv",
+        conta_ref=conta_ref,
+        txs=txs,
+        bank_id="nubank",
+        account_id=block.get("account_id"),
+        currency="BRL",
+        balance_end=None,
+        balance_date=None,
+        periodo_inicio=None,
+        periodo_fim=None,
+    )
+    return {
+        "ok": True,
+        "formato": "nubank_csv",
+        "contas": 1,
+        "linhas_inseridas": ins,
+        "linhas_duplicadas_ignoradas": sk,
+        "imports": [{"import_id": imp_id, "conta_ref": conta_ref, "movimentos_no_arquivo": n}],
+    }
+
+
+def list_extrato_linhas(conta_ref=None, date_from=None, date_to=None, pendente=None, limit=500):
+    if not get_database_url():
+        return []
+    init_db()
+    cond, params = ["1=1"], []
+    if conta_ref:
+        cond.append("e.conta_ref = %s")
+        params.append(str(conta_ref)[:200])
+    df = _parse_date_arg(date_from)
+    dt = _parse_date_arg(date_to)
+    if df:
+        cond.append("e.data_mov >= %s")
+        params.append(df)
+    if dt:
+        cond.append("e.data_mov <= %s")
+        params.append(dt)
+    if pendente is True:
+        cond.append("e.conciliado_lancamento_id IS NULL")
+    elif pendente is False:
+        cond.append("e.conciliado_lancamento_id IS NOT NULL")
+    params.append(min(int(limit or 500), 25000))
+    w = " AND ".join(cond)
+    with cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT e.id, e.conta_ref, e.data_mov, e.valor, e.tipo, e.memo, e.payee, e.fitid,
+                   e.conciliado_lancamento_id, e.conciliado_em, i.filename, i.imported_at
+            FROM banco_extrato_linhas e
+            JOIN banco_ofx_imports i ON i.id = e.import_id
+            WHERE {w}
+            ORDER BY e.data_mov DESC, e.id DESC
+            LIMIT %s;
+            """,
+            params,
+        )
+        rows = cur.fetchall()
+    out = []
+    for r in rows:
+        out.append(
+            {
+                "id": r[0],
+                "conta_ref": r[1],
+                "data_mov": r[2].isoformat() if hasattr(r[2], "isoformat") else str(r[2]),
+                "valor": float(r[3]) if r[3] is not None else 0.0,
+                "tipo": r[4],
+                "memo": r[5],
+                "payee": r[6],
+                "fitid": r[7],
+                "conciliado_lancamento_id": r[8],
+                "conciliado_em": r[9].isoformat() if r[9] and hasattr(r[9], "isoformat") else (str(r[9]) if r[9] else None),
+                "arquivo": r[10],
+                "importado_em": r[11].isoformat() if r[11] and hasattr(r[11], "isoformat") else str(r[11]),
+            }
+        )
+    return out
+
+
+def list_ofx_contas():
+    if not get_database_url():
+        return []
+    init_db()
+    with cursor() as cur:
+        cur.execute("SELECT DISTINCT conta_ref FROM banco_extrato_linhas ORDER BY 1;")
+        return [r[0] for r in cur.fetchall()]
+
+
+def _fetch_extrato_linha(linha_id: int):
+    if not get_database_url():
+        return None
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, conta_ref, data_mov, valor, tipo, memo, payee, fitid, conciliado_lancamento_id
+            FROM banco_extrato_linhas WHERE id = %s;
+            """,
+            (int(linha_id),),
+        )
+        r = cur.fetchone()
+    if not r:
+        return None
+    dm = r[2]
+    return {
+        "id": r[0],
+        "conta_ref": r[1],
+        "data_mov": dm if hasattr(dm, "year") else _parse_date_arg(dm),
+        "valor": float(r[3]) if r[3] is not None else 0.0,
+        "tipo": r[4],
+        "memo": r[5],
+        "payee": r[6],
+        "fitid": r[7],
+        "conciliado_lancamento_id": r[8],
+    }
+
+
+def sugestoes_conciliacao_extrato(linha_id: int, janela_dias: int = 7, limit: int = 10):
+    ex = _fetch_extrato_linha(linha_id)
+    if not ex or ex.get("conciliado_lancamento_id"):
+        return []
+    tipo_l = "receita" if ex["tipo"] == "credito" else "despesa"
+    absv = abs(float(ex["valor"]))
+    d0 = ex["data_mov"] - timedelta(days=max(1, int(janela_dias)))
+    d1 = ex["data_mov"] + timedelta(days=max(1, int(janela_dias)))
+    tol = 0.02
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT l.id, l.data, l.valor, l.tipo, l.descricao, c.nome
+            FROM financeiro_lancamentos l
+            LEFT JOIN financeiro_categorias c ON c.id = l.categoria_id
+            WHERE l.tipo = %s
+              AND l.data >= %s AND l.data <= %s
+              AND l.valor BETWEEN %s AND %s
+              AND NOT EXISTS (
+                SELECT 1 FROM banco_extrato_linhas x
+                WHERE x.conciliado_lancamento_id = l.id AND x.id <> %s
+              )
+            ORDER BY ABS((l.data - CAST(%s AS DATE))::integer), ABS((l.valor - %s::numeric))
+            LIMIT %s;
+            """,
+            (tipo_l, d0, d1, absv - tol, absv + tol, int(linha_id), ex["data_mov"], absv, min(int(limit), 50)),
+        )
+        rows = cur.fetchall()
+    return [
+        {
+            "lancamento_id": r[0],
+            "data": r[1].isoformat() if hasattr(r[1], "isoformat") else str(r[1]),
+            "valor": float(r[2]) if r[2] else 0,
+            "tipo": r[3],
+            "descricao": r[4],
+            "categoria_nome": r[5],
+        }
+        for r in rows
+    ]
+
+
+def conciliar_extrato_linha(linha_id: int, lancamento_id: int) -> bool:
+    ex = _fetch_extrato_linha(linha_id)
+    if not ex or ex.get("conciliado_lancamento_id"):
+        return False
+    tipo_l = "receita" if ex["tipo"] == "credito" else "despesa"
+    init_db()
+    with cursor() as cur:
+        cur.execute("SELECT id, tipo FROM financeiro_lancamentos WHERE id = %s;", (int(lancamento_id),))
+        lr = cur.fetchone()
+        if not lr or lr[1] != tipo_l:
+            return False
+        cur.execute(
+            "SELECT id FROM banco_extrato_linhas WHERE conciliado_lancamento_id = %s AND id <> %s;",
+            (int(lancamento_id), int(linha_id)),
+        )
+        if cur.fetchone():
+            return False
+        cur.execute(
+            """
+            UPDATE banco_extrato_linhas
+            SET conciliado_lancamento_id = %s, conciliado_em = NOW()
+            WHERE id = %s AND conciliado_lancamento_id IS NULL;
+            """,
+            (int(lancamento_id), int(linha_id)),
+        )
+        return cur.rowcount > 0
+
+
+def desconciliar_extrato_linha(linha_id: int) -> bool:
+    if not get_database_url():
+        return False
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            """
+            UPDATE banco_extrato_linhas
+            SET conciliado_lancamento_id = NULL, conciliado_em = NULL
+            WHERE id = %s;
+            """,
+            (int(linha_id),),
+        )
+        return cur.rowcount > 0
+
+
+def resumo_conciliacao_extrato(conta_ref=None):
+    if not get_database_url():
+        return {"pendentes": 0, "conciliadas": 0, "total": 0}
+    init_db()
+    cond = "1=1"
+    params = []
+    if conta_ref:
+        cond = "conta_ref = %s"
+        params.append(str(conta_ref)[:200])
+    with cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT
+              COUNT(*) FILTER (WHERE conciliado_lancamento_id IS NULL),
+              COUNT(*) FILTER (WHERE conciliado_lancamento_id IS NOT NULL),
+              COUNT(*)
+            FROM banco_extrato_linhas WHERE {cond};
+            """,
+            params,
+        )
+        r = cur.fetchone()
+    return {"pendentes": int(r[0] or 0), "conciliadas": int(r[1] or 0), "total": int(r[2] or 0)}

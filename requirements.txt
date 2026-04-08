@@ -2,6 +2,7 @@
 flask>=3.0
 gunicorn>=21.0
 python-dotenv>=1.0
+PyJWT[crypto]>=2.8
 
 # Automação e login
 playwright>=1.40
@@ -13,3 +14,6 @@ openpyxl>=3.1
 
 # Banco (produção)
 psycopg2-binary>=2.9
+
+# Extrato OFX
+ofxparse>=0.21
