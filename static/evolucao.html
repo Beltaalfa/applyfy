@@ -73,7 +73,7 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js" defer></script>
+  <script src="/static/painel-shell.js?v=6" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     document.body.classList.add('loaded');
@@ -264,7 +264,6 @@
       if (el2) el2.textContent = id;
     });
 
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
   </script>
 </body>
 </html>

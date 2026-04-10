@@ -58,7 +58,7 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js" defer></script>
+  <script src="/static/painel-shell.js?v=6" defer></script>
   <script>
     var cols = ['Nome','Email','Saldo pendente','Saldo retido','Saldo disponível','Total sacado','Vendas líquidas','Indicação','Outros'];
     var dadosAtuais = [];
@@ -127,7 +127,6 @@
           .catch(function() { renderTable([]); });
       });
     }).catch(function() { document.getElementById('data').innerHTML = '<option value="">Erro ao carregar datas</option>'; });
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
   </script>
 </body>
 </html>

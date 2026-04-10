@@ -2,6 +2,12 @@
 
 Documento de contrato entre **Hub** (`hub.northempresarial.com`) e **Applyfy** (`applyfy.northempresarial.com`). O código consumidor está em `auth_hub.py` e `app.py`.
 
+**Espelho do doc no repo North Hub (para o Cursor comparar):** [`docs/referencia-hub-INTEGRACAO-APPLYFY.md`](referencia-hub-INTEGRACAO-APPLYFY.md)
+
+**Checklist para quem faz deploy do Hub (variáveis e build):** [`docs/HUB_OPERADORES_CHECKLIST.md`](HUB_OPERADORES_CHECKLIST.md)
+
+**Para o Cursor no repo Hub (login Applyfy ainda não funciona):** [`docs/CURSOR_HUB_DEBUG_LOGIN.md`](CURSOR_HUB_DEBUG_LOGIN.md)
+
 ---
 
 ## Resumo Applyfy (o que configurar aqui)
@@ -123,11 +129,11 @@ Middleware: utilizador autenticado em `/login` vai para destino seguro ou defaul
 
 | Rota | Uso |
 |------|-----|
-| `GET /auth/callback` | Se cookie já veio do Hub, segue para `next` ou `callbackUrl` (sanitizado); código OAuth só se existir `HUB_TOKEN_URL` (não usado pelo Hub atual). |
+| `GET /auth/callback` | Se cookie já veio do Hub, segue para o primeiro query param não vazio entre: `callbackUrl`, `next`, `returnUrl`, `return_to`, `redirect`, `return`, `continue`, `goto`, `destination` (sanitizado; alinhado ao Hub); código OAuth só se existir `HUB_TOKEN_URL` (não usado pelo Hub atual). |
 | `GET /auth/logout` | Limpa sessão Flask; redireciona para `HUB_LOGOUT_URL`. |
 | `GET /api/me` | `auth_enabled`, `authenticated`, `user` (`sub`, `project_id`, `hub_role`), `permissions`, `nav` (menu). |
 
-Rotas públicas (sem JWT de utilizador): `/health`, `/api/health`, `/api/webhooks/applyfy`, `/api/me`, estáticos, `/auth/callback`, `/auth/logout`, etc.
+Rotas públicas (sem JWT de utilizador): `/health`, `/api/health`, `/api/webhooks/applyfy`, `/api/me`, `/manifest.json`, `/favicon.ico`, `/sw.js`, prefixo `/static/`, `/auth/callback`, `/auth/logout`, etc. (`/manifest.json` evita redirect ao Hub quando o browser pede o manifest na raiz; o ficheiro real está em `static/manifest.json` com `static_url_path=""`.)
 
 ---
 
@@ -156,6 +162,8 @@ Utilizador com `applyfy.admin` na lista é tratado como acesso amplo às permiss
 - [ ] `APPLYFY_TRUST_PROXY=1` se estiver atrás de Nginx com `X-Forwarded-*`
 - [ ] (Opcional) `APPLYFY_HUB_ALLOWED_PROJECT_IDS` alinhado com `client_id` / `project_id` / `tenant_id` do JWT; no Hub ligar **`HUB_APPLYFY_JWT_INCLUDE_CLIENT_ID=1`** se usarem `client_id`
 - [ ] Reiniciar Gunicorn/systemd após alterar `.env`
+
+**Verificação sem browser:** `./venv/bin/python scripts/hub_auth_smoke.py` (com `APPLYFY_AUTH_ENABLED=1`, confirma redirects e `/api/me` sem cookie).
 
 ---
 

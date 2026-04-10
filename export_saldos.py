@@ -12,7 +12,8 @@ from datetime import datetime
 
 import pandas as pd
 import pyotp
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from playwright.sync_api import Error as PWError, sync_playwright, TimeoutError as PWTimeout
+from playwright._impl._errors import TargetClosedError
 
 import config
 import db
@@ -419,6 +420,33 @@ def _clear_checkpoint():
             pass
 
 
+def _playwright_teardown(pw_cm, browser, context, page):
+    """
+    Fecha page → context → browser → driver. Erros são engolidos: EPIPE no driver Node
+    ao encerrar o pipe não deve derrubar o processo Python após export concluído.
+    """
+    if page:
+        try:
+            page.close()
+        except (PWError, TargetClosedError, Exception):
+            pass
+    if context:
+        try:
+            context.close()
+        except (PWError, TargetClosedError, Exception):
+            pass
+    if browser:
+        try:
+            browser.close()
+        except (PWError, TargetClosedError, Exception):
+            pass
+    if pw_cm is not None:
+        try:
+            pw_cm.__exit__(None, None, None)
+        except (PWError, TargetClosedError, Exception) as ex:
+            _log_txt(f"ℹ Encerramento do driver Playwright (avisos comuns após export longo): {ex!s}")
+
+
 def run_export(session_path=None, save_to_disk=True):
     """
     Executa a exportação. session_path default: config.SESSION_FILE.
@@ -461,11 +489,19 @@ def run_export(session_path=None, save_to_disk=True):
     use_headed = headed and config.has_display_server()
     if headed and not use_headed:
         _log_txt("Sem DISPLAY; usando headless no export (igual ao servidor).")
-    with sync_playwright() as p:
+    pw_cm = sync_playwright()
+    p = pw_cm.__enter__()
+    browser = None
+    context = None
+    page = None
+    try:
         browser = p.chromium.launch(
             headless=not use_headed,
             args=[
-                "--disable-application-cache", "--disable-cache", "--disk-cache-size=0",
+                "--disable-application-cache",
+                "--disable-cache",
+                "--disk-cache-size=0",
+                "--disable-dev-shm-usage",
                 "--disable-blink-features=AutomationControlled",
             ],
         )
@@ -578,6 +614,19 @@ def run_export(session_path=None, save_to_disk=True):
                             "pagina": pagina, "linha": i + 1, "nome": nome, "email": email,
                             "status": "TIMEOUT", "segundos": dur, "mensagem": f"Timeout (parou em: {etapa})",
                         })
+                    except (PWError, TargetClosedError) as e:
+                        erro_count += 1
+                        dur = round(time.perf_counter() - produtor_inicio, 2)
+                        msg = str(e)[:200]
+                        _log_txt(f"⚠ PLAYWRIGHT | {nome} ({email}) | {dur}s | {msg}")
+                        log_rows.append({
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "pagina": pagina, "linha": i + 1, "nome": nome, "email": email,
+                            "status": "ERRO", "segundos": dur, "mensagem": msg,
+                        })
+                        if isinstance(e, TargetClosedError) or "Target closed" in msg or "Browser closed" in msg:
+                            _log_txt("❌ Browser/contexto encerrado — interrompendo export (retome com run_daily).")
+                            raise
                     except Exception as e:
                         erro_count += 1
                         dur = round(time.perf_counter() - produtor_inicio, 2)
@@ -621,6 +670,7 @@ def run_export(session_path=None, save_to_disk=True):
                 pd.DataFrame(log_rows).to_csv(config.LOG_CSV, index=False, sep=";", encoding="utf-8-sig")
             dur_total = round(time.perf_counter() - inicio_geral, 2)
             _log_txt(f"FIM | duração total: {dur_total}s | OK={ok_count} TIMEOUT={timeout_count} ERRO={erro_count}")
-            browser.close()
+    finally:
+        _playwright_teardown(pw_cm, browser, context, page)
 
     return resultados, log_rows, run_at

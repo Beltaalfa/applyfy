@@ -173,6 +173,27 @@ body {
   color: #ffffff;
 }
 
+.sidebar-footer {
+  flex-shrink: 0;
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px solid rgba(39, 39, 42, 0.8);
+}
+
+.sidebar-link--logout {
+  opacity: 0.9;
+  font-size: 0.8125rem;
+}
+
+button.sidebar-link {
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
 .main-column {
   flex: 1;
   display: flex;

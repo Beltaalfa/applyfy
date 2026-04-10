@@ -1,24 +1,22 @@
-/* Service Worker Applyfy Painel - PWA installável */
-const CACHE = 'applyfy-v3';
+/* Applyfy painel — SW mínimo. Sem fetch handler: não intercepta navegação nem /auth/logout.
+ * Não usar clients.claim(): com skipWaiting() o Chrome pode lançar
+ * InvalidStateError: "Only the active worker can claim clients" (visto em sw.js:1).
+ * bump: applyfy-v5
+ */
+const CACHE = "applyfy-v5";
 
-self.addEventListener('install', function(e) {
+self.addEventListener("install", function () {
   self.skipWaiting();
 });
 
-self.addEventListener('activate', function(e) {
+self.addEventListener("activate", function (e) {
   e.waitUntil(
-    caches.keys().then(function(keys) {
-      return Promise.all(keys.filter(function(k) { return k !== CACHE; }).map(function(k) { return caches.delete(k); }));
-    }).then(function() { return self.clients.claim(); })
-  );
-});
-
-self.addEventListener('fetch', function(e) {
-  if (e.request.mode === 'navigate') return;
-  if (e.request.url.match(/\/api\//)) return;
-  e.respondWith(
-    fetch(e.request).catch(function() {
-      return caches.match(e.request).then(function(c) { return c || caches.match('/'); });
+    caches.keys().then(function (keys) {
+      return Promise.all(
+        keys.map(function (k) {
+          return caches.delete(k);
+        })
+      );
     })
   );
 });

@@ -75,7 +75,7 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js" defer></script>
+  <script src="/static/painel-shell.js?v=6" defer></script>
   <script>
     var autoRefreshId = null;
     var LOG_URLS = ['/api/vendas/log?lines=500', '/api/vendas-log?lines=500'];
@@ -218,7 +218,6 @@
     loadLog();
     autoRefreshId = setInterval(loadLog, 3000);
     loadImportTable();
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
   </script>
 </body>
 </html>

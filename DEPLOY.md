@@ -171,7 +171,7 @@ Deve imprimir `OK`. Ver também [USABILIDADE.md](USABILIDADE.md) no repositório
 ```bash
 cd /var/www/applyfy
 source venv/bin/activate
-gunicorn -w 1 -b 127.0.0.1:5000 --timeout 120 app:app
+gunicorn --no-control-socket -w 1 -b 127.0.0.1:5000 --timeout 120 app:app
 ```
 
 Recomendado: usar systemd para manter o Gunicorn rodando.
@@ -190,7 +190,7 @@ WorkingDirectory=/var/www/applyfy
 Environment="PATH=/var/www/applyfy/venv/bin"
 # O prefixo "-" faz o systemd NÃO falhar se o ficheiro não existir (evita Result=resources).
 EnvironmentFile=-/var/www/applyfy/.env
-ExecStart=/var/www/applyfy/venv/bin/gunicorn -w 1 -b 127.0.0.1:5000 --timeout 120 app:app
+ExecStart=/var/www/applyfy/venv/bin/gunicorn --no-control-socket -w 1 -b 127.0.0.1:5000 --timeout 120 app:app
 Restart=always
 
 [Install]
@@ -198,6 +198,8 @@ WantedBy=multi-user.target
 ```
 
 **Ficheiro `.env`:** crie a partir do exemplo (`cp .env.example .env`) e preencha credenciais. Sem `.env`, o serviço ainda arranca se usar `EnvironmentFile=-/...` acima; com `EnvironmentFile=/...` (sem hífen), **falta de `.env` quebra o `systemctl start`** com `Failed to load environment files` e `result 'resources'`.
+
+**Produção (segredo):** com login Hub (`APPLYFY_AUTH_ENABLED=1`), defina `FLASK_SECRET_KEY` estável (ver [`docs/env-bloco-hub-exemplo.env`](docs/env-bloco-hub-exemplo.env)). Restringir leitura: `sudo chown root:www-data /var/www/applyfy/.env && sudo chmod 640 /var/www/applyfy/.env` — o Gunicorn lê como `www-data`; edite o `.env` com `sudo`.
 
 **Permissões para `www-data`:** o processo do Gunicorn corre como `www-data` e precisa de **ler** o código e o `venv`:
 
@@ -207,7 +209,7 @@ sudo chmod -R g+rX /var/www/applyfy
 sudo chmod g+w /var/www/applyfy/data   # se o painel/export gravar em data/
 ```
 
-O aviso `Control server error: [Errno 13] Permission denied` no master costuma ser inofensivo se o **worker** arranca a seguir; se o serviço morrer de todo, confira `journalctl` e as permissões acima.
+Com **Gunicorn 25+**, o socket de controlo por defeito tenta escrever num caminho inacessível ao `www-data` (ex. `/var/www/.gunicorn`). O unit em [`applyfy-painel.service`](applyfy-painel.service) usa **`--no-control-socket`** para evitar esse erro; mantenha-o no `ExecStart` ao copiar da documentação.
 
 **Após falhas em cadeia:** `sudo systemctl reset-failed applyfy-painel && sudo systemctl start applyfy-painel`
 

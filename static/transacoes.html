@@ -76,7 +76,7 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js" defer></script>
+  <script src="/static/painel-shell.js?v=6" defer></script>
   <script>
     function buildUrl() {
       var from = document.getElementById('dateFrom').value;
@@ -233,7 +233,6 @@
       if (e.target === this) closeSyncModal();
     });
     loadTransacoes();
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
   </script>
 </body>
 </html>

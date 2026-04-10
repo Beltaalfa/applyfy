@@ -20,6 +20,14 @@ import auth_hub
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 load_dotenv(os.path.join(BASE_DIR, ".env"), override=True)
 
+if auth_hub.auth_enabled() and not (
+    (os.environ.get("FLASK_SECRET_KEY") or os.environ.get("SECRET_KEY") or "").strip()
+):
+    raise RuntimeError(
+        "APPLYFY_AUTH_ENABLED=1 exige FLASK_SECRET_KEY (ou SECRET_KEY) definido e estável no .env. "
+        'Gere um valor: python3 -c "import secrets; print(secrets.token_hex(32))"'
+    )
+
 app = Flask(__name__, static_folder="static", static_url_path="")
 app.config["JSON_AS_ASCII"] = False
 _mb = (os.environ.get("APPLYFY_MAX_UPLOAD_MB") or "35").strip() or "35"
@@ -84,8 +92,8 @@ def _hub_auth_gate():
 
 @app.route("/auth/callback")
 def hub_auth_callback():
-    next_raw = (request.args.get("next") or request.args.get("callbackUrl") or "").strip()
-    target = auth_hub.sanitize_redirect_target(next_raw or None)
+    next_raw = auth_hub.redirect_target_from_request_args(request)
+    target = auth_hub.sanitize_redirect_target(next_raw)
     code = (request.args.get("code") or "").strip()
     if code:
         token = auth_hub.exchange_code_for_token(code)
@@ -98,8 +106,80 @@ def hub_auth_callback():
 
 @app.route("/auth/logout")
 def hub_auth_logout():
+    # #region agent log
+    try:
+        import json
+        import time as _time
+
+        with open("/var/www/.cursor/debug-422278.log", "a", encoding="utf-8") as _df:
+            _df.write(
+                json.dumps(
+                    {
+                        "sessionId": "422278",
+                        "location": "app.py:hub_auth_logout",
+                        "message": "flask_logout_hit",
+                        "data": {"path": request.path},
+                        "timestamp": int(_time.time() * 1000),
+                        "hypothesisId": "H4",
+                        "runId": "pre-fix",
+                    }
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+    # #endregion
     auth_hub.clear_hub_session()
-    return redirect(auth_hub.hub_logout_url())
+    dest = auth_hub.hub_logout_url()
+    # #region agent log
+    try:
+        import json
+        import time as _time
+        from urllib.parse import urlparse as _urlparse
+
+        _p = _urlparse(dest) if dest else None
+        with open("/var/www/.cursor/debug-422278.log", "a", encoding="utf-8") as _df:
+            _df.write(
+                json.dumps(
+                    {
+                        "sessionId": "422278",
+                        "location": "app.py:hub_auth_logout_redirect",
+                        "message": "redirect_after_clear",
+                        "data": {
+                            "dest_netloc": _p.netloc if _p else "",
+                            "dest_path": _p.path if _p else "",
+                        },
+                        "timestamp": int(_time.time() * 1000),
+                        "hypothesisId": "H5",
+                        "runId": "post-env-fix",
+                    }
+                )
+                + "\n"
+            )
+    except Exception:
+        pass
+    # #endregion
+    return redirect(dest)
+
+
+@app.route("/api/_debug/client-log", methods=["POST"])
+def agent_client_debug_log():
+    """Debug session: browser envia NDJSON para o ficheiro do agent (sem PII)."""
+    # #region agent log
+    import json as _json
+    import time as _time
+
+    try:
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            payload = {}
+        payload.setdefault("timestamp", int(_time.time() * 1000))
+        with open("/var/www/.cursor/debug-422278.log", "a", encoding="utf-8") as _f:
+            _f.write(_json.dumps(payload) + "\n")
+        return jsonify({"ok": True})
+    except Exception:
+        return jsonify({"ok": False}), 500
+    # #endregion
 
 
 @app.route("/api/me")
@@ -1161,6 +1241,18 @@ def api_job_start():
     """Inicia o job de exportação em background (mesmo que rodar_job.sh)."""
     try:
         config.ensure_data_dir()
+        if not config.data_dir_writable():
+            dd = config.DATA_DIR
+            return jsonify(
+                {
+                    "ok": False,
+                    "message": (
+                        f"Sem permissão de escrita em {dd} (ex.: cron.log). "
+                        "O serviço Gunicorn usa o utilizador www-data: "
+                        f"sudo chown -R www-data:www-data {dd}"
+                    ),
+                }
+            ), 500
         log_path = os.path.join(config.DATA_DIR, "cron.log")
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"

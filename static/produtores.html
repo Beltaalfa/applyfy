@@ -50,7 +50,7 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js" defer></script>
+  <script src="/static/painel-shell.js?v=6" defer></script>
   <script>
     function loadProdutores() {
       var tbody = document.getElementById('tbody');
@@ -114,7 +114,6 @@
       });
     }
     loadProdutores();
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
   </script>
 </body>
 </html>

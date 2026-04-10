@@ -22,6 +22,12 @@ def ensure_data_dir():
     os.makedirs(DATA_DIR, exist_ok=True)
 
 
+def data_dir_writable() -> bool:
+    """True se o processo atual pode criar ficheiros em DATA_DIR (ex.: cron.log)."""
+    ensure_data_dir()
+    return os.access(DATA_DIR, os.W_OK)
+
+
 def get_meta_vendas_liquidas() -> float:
     """Meta de vendas líquidas (painel /meta e notificações WAHA). Default 10000."""
     raw = (os.environ.get("APPLYFY_META_VENDAS_LIQUIDAS") or "10000").strip()

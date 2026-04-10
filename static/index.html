@@ -61,7 +61,7 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js" defer></script>
+  <script src="/static/painel-shell.js?v=6" defer></script>
   <script>
     var dadosAtuais = [];
     var sortCol = null;
@@ -130,7 +130,6 @@
         document.getElementById('tbody').innerHTML = '<tr><td colspan="9" class="empty">Erro ao carregar dados.</td></tr>';
         document.getElementById('lastRun').textContent = 'Erro ao carregar.';
       });
-    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(function(){});
   </script>
 </body>
 </html>

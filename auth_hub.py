@@ -56,6 +56,28 @@ def effective_return_url() -> str:
     return request.url
 
 
+def _hub_origin_from_applyfy_public_url() -> str | None:
+    """
+    URL base do Hub (https://hub.apex) quando HUB_LOGIN_URL não está no .env.
+    Substitui o primeiro rótulo do hostname de APPLYFY_PUBLIC_URL por HUB_LOGIN_SUBDOMAIN (default hub).
+    """
+    raw = (os.environ.get("APPLYFY_PUBLIC_URL") or "").strip()
+    if not raw:
+        return None
+    try:
+        u = urlparse(raw if "://" in raw else f"https://{raw}")
+        host = (u.hostname or "").lower()
+        if not host or "." not in host:
+            return None
+        _first, rest = host.split(".", 1)
+        hub_sub = (os.environ.get("HUB_LOGIN_SUBDOMAIN") or os.environ.get("HUB_SUBDOMAIN") or "hub").strip().lower() or "hub"
+        hub_host = f"{hub_sub}.{rest}"
+        scheme = u.scheme if u.scheme in ("http", "https") else "https"
+        return f"{scheme}://{hub_host}"
+    except Exception:
+        return None
+
+
 def hub_login_url(return_to: str | None = None) -> str:
     """
     Redireciona para o login do Hub com o destino pós-login.
@@ -72,6 +94,29 @@ def hub_login_url(return_to: str | None = None) -> str:
     if (os.environ.get("HUB_LOGIN_APPEND_NEXT") or "").strip().lower() in ("1", "true", "yes"):
         parts.append(f"next={quote(return_to, safe='')}")
     return f"{base}{sep}{'&'.join(parts)}"
+
+
+# Parâmetros de query alinhados ao Hub (safe-post-login-redirect / middleware) — primeiro valor não vazio ganha.
+CALLBACK_URL_QUERY_KEYS: tuple[str, ...] = (
+    "callbackUrl",
+    "next",
+    "returnUrl",
+    "return_to",
+    "redirect",
+    "return",
+    "continue",
+    "goto",
+    "destination",
+)
+
+
+def redirect_target_from_request_args(req: Request) -> str | None:
+    """Primeiro argumento de query não vazio entre as chaves reconhecidas pelo Hub."""
+    for key in CALLBACK_URL_QUERY_KEYS:
+        v = (req.args.get(key) or "").strip()
+        if v:
+            return v
+    return None
 
 
 def sanitize_redirect_target(next_raw: str | None) -> str:
@@ -115,7 +160,26 @@ def hub_logout_url() -> str:
     u = (os.environ.get("HUB_LOGOUT_URL") or "").strip()
     if u:
         return u
-    return hub_login_url()
+    # Sem isto, o default era `hub_login_url()` — não chama `/logout` do Hub e a sessão NextAuth não termina.
+    base = (os.environ.get("HUB_LOGIN_URL") or "").strip().rstrip("/")
+    if base:
+        try:
+            p = urlparse(base)
+            if p.scheme in ("http", "https") and p.netloc:
+                return f"{p.scheme}://{p.netloc}/logout"
+        except Exception:
+            pass
+    derived = _hub_origin_from_applyfy_public_url()
+    if derived:
+        return f"{derived}/logout"
+    login_fb = hub_login_url()
+    if login_fb.startswith("http://") or login_fb.startswith("https://"):
+        try:
+            p = urlparse(login_fb)
+            return f"{p.scheme}://{p.netloc}/logout"
+        except Exception:
+            pass
+    return login_fb
 
 
 def is_public_path(path: str) -> bool:
@@ -124,9 +188,13 @@ def is_public_path(path: str) -> bool:
     exact = {
         "/health",
         "/api/health",
+        "/api/_debug/client-log",
         "/api/me",
         "/api/webhooks/applyfy",
         "/favicon.ico",
+        "/manifest.json",
+        "/robots.txt",
+        "/sitemap.xml",
         "/sw.js",
         "/auth/callback",
         "/auth/logout",
@@ -359,6 +427,7 @@ def hub_me_payload() -> dict[str, Any]:
     return {
         "auth_enabled": True,
         "authenticated": True,
+        "hub_logout_url": hub_logout_url(),
         "user": {
             "sub": session.get("hub_sub"),
             "project_id": session.get("hub_project_id"),

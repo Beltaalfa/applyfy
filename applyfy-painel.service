@@ -8,7 +8,7 @@ Group=www-data
 WorkingDirectory=/var/www/applyfy
 Environment="PATH=/var/www/applyfy/venv/bin"
 EnvironmentFile=/var/www/applyfy/.env
-ExecStart=/var/www/applyfy/venv/bin/gunicorn -w 1 -b 127.0.0.1:5000 --timeout 120 app:app
+ExecStart=/var/www/applyfy/venv/bin/gunicorn --no-control-socket -w 1 -b 127.0.0.1:5000 --timeout 120 app:app
 Restart=always
 
 [Install]
