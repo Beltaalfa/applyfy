@@ -29,3 +29,7 @@ NU_*.csv
 *.ofx
 produtores.txt
 produtores_saldos.*
+
+# Cópias de segurança locais (não versionar — o histórico Git é o backup)
+*.bundle
+applyfy-dados-e-runtime*.tar.gz

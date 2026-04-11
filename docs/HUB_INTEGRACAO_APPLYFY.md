@@ -60,19 +60,31 @@ Login e gestão de utilizadores no **Hub** (Next.js + NextAuth). O **Applyfy** s
 ### JWT (HS256)
 
 - Segredo partilhado: Hub `HUB_APPLYFY_JWT_SECRET` = Applyfy `HUB_JWT_SECRET` (ou alias `HUB_APPLYFY_JWT_SECRET` aqui).
-- **Claims:** `sub` (id do user no Hub), `exp`, `iat`, `permissions` (array), `scope` (mesmas permissões separadas por espaço), `hub_role` (`admin` \| `client`).
+- **Claims:** `sub` (id do user no Hub), `exp`, `iat`, `permissions` (array), `scope` (mesmas permissões separadas por espaço), `hub_role` (`admin` \| `client`), opcionalmente `email`, `name`.
 - **Opcional:** `client_id` se no Hub estiver `HUB_APPLYFY_JWT_INCLUDE_CLIENT_ID=1` (primeiro `UserClientPermission` do cliente).
+- **Opcional (granular por tela):** `applyfy_screens` — array de paths de ecrã (ex. `"/vendas"`, `"/financeiro"`), alinhado à lista canónica em `north/hub/src/lib/applyfy-screens.ts` e espelho `applyfy/applyfy_screens.py`. Quando **presente** no JWT, o Applyfy aplica o gate por ecrã (`session_can_access_path` em `auth_hub.py`) em vez da verificação só por permissões coarse. **Ausente** no JWT = modo legado (só `permissions` + `required_permissions_for_path`). Utilizadores **admin** no Hub normalmente não incluem esta claim (acesso total no painel). Para **clientes** com permissão ao cliente ApplyFy, o Hub preenche a lista a partir de `UserApplyfyScreenGrant` (gestão em **Admin → ApplyFy — telas**) ou, se não existir registo, expande a partir das permissões coarse (comportamento anterior).
 
 O Hub **não** define `iss` nem `aud`. O Applyfy valida com `verify_aud` e `verify_iss` desligados.
 
 ### Permissões (strings exatas)
 
-`applyfy.painel`, `applyfy.financeiro`, `applyfy.jobs`, `applyfy.admin`.
+`applyfy.painel`, `applyfy.financeiro`, `applyfy.jobs`, `applyfy.admin`, `applyfy.comercial`, `applyfy.comercial.gerente`.
 
 | Role Hub | JWT `permissions` |
 |----------|-------------------|
-| `admin` | As quatro |
-| `client` | Só `applyfy.painel` (lógica em `applyfy-permissions.ts`) |
+| `admin` | As quatro base + `applyfy.admin` |
+| `client` | `applyfy.painel`, `applyfy.financeiro`, `applyfy.jobs` (sem `applyfy.admin`) — ver `applyfy-permissions.ts` |
+
+**Carteira comercial (painel Applyfy — ecrã Comercial):** no Hub, por utilizador com vínculo ao cliente Applyfy (`UserClientPermission`), existem flags `applyfyComercial` e `applyfyGerenteComercial`. O Hub acrescenta ao JWT:
+
+- `applyfy.comercial` — o nome deste utilizador pode ser escolhido como **vendedor** (dropdown no Applyfy).
+- `applyfy.comercial.gerente` — pode **editar** atribuições vendedor → produtor; vê todos os produtores na tabela (com ecrã autorizado). Sem esta flag mas com `applyfy.comercial`, o utilizador **só vê os produtores da sua carteira** (filtro no Applyfy por `vendedor_user_id` / nome legado).
+
+Gestão das flags: **painel Applyfy → Config. comercial** (`/config-comercial`; requer `applyfy.admin` no JWT). O Hub pode manter um redireccionamento de `/admin/config/applyfy-carteira` para esta página quando `NEXT_PUBLIC_APPLYFY_URL` está definido. Após alterar flags, o utilizador deve voltar a abrir o Applyfy (ou esperar renovação do cookie JWT) para as claims atualizarem.
+
+**Claims opcionais de perfil no JWT:** `email`, `name` (para filtro e legado de nomes).
+
+O acesso **por tela** no painel é controlado pela claim opcional `applyfy_screens`, não só por estas strings.
 
 ### Implementação no código Hub
 

@@ -18,6 +18,8 @@
     .vendedor-cell { white-space: nowrap; }
     .vendedor-cell .vendedor-row { display: flex; flex-wrap: wrap; gap: 0.35rem; align-items: center; max-width: 22rem; }
     .vendedor-cell .vendedor-input { flex: 1; min-width: 6rem; padding: 0.3rem 0.45rem; border-radius: 6px; border: 1px solid var(--border, #333); background: var(--input-bg, #1a1a1a); color: inherit; font-size: 0.85rem; }
+    .vendedor-cell .vendedor-select { min-width: 10rem; }
+    .vendedor-readonly { font-size: 0.85rem; color: var(--muted, #aaa); }
     .vendedor-cell .btn-guardar { padding: 0.3rem 0.55rem; font-size: 0.8rem; }
   </style>
 </head>
@@ -85,7 +87,11 @@
     var sortTypeStored = 'text';
     var META_VALOR = 10000;
     var assignments = {};
+    var assignmentUserIds = {};
     var useServerDb = false;
+    var canEditCarteira = false;
+    var eligibleVendedores = [];
+    var vendedorOnlyMode = false;
     var STORAGE_KEY_CARTEIRA = 'applyfy_comercial_carteira';
     var STORAGE_KEY_MEU_NOME = 'applyfy_comercial_meu_nome';
 
@@ -152,11 +158,35 @@
       return 'pct-low';
     }
 
-    function vendedorCellHtml(email, current) {
-      return '<td class="vendedor-cell"><div class="vendedor-row">' +
-        '<input type="text" class="vendedor-input" data-email="' + esc(email) + '" value="' + esc(current || '') + '" placeholder="Nome" />' +
-        '<button type="button" class="btn btn-secondary btn-guardar vendedor-save" data-email="' + esc(email) + '">Guardar</button>' +
-        '</div></td>';
+    function vendedorCellHtml(email, current, vendedorUserId) {
+      if (!useServerDb) {
+        return '<td class="vendedor-cell"><div class="vendedor-row">' +
+          '<input type="text" class="vendedor-input" data-email="' + esc(email) + '" value="' + esc(current || '') + '" placeholder="Nome" />' +
+          '<button type="button" class="btn btn-secondary btn-guardar vendedor-save" data-email="' + esc(email) + '">Guardar</button>' +
+          '</div></td>';
+      }
+      if (canEditCarteira && eligibleVendedores.length) {
+        var pre = vendedorUserId || '';
+        if (!pre && current) {
+          for (var ii = 0; ii < eligibleVendedores.length; ii++) {
+            if ((eligibleVendedores[ii].name || '').trim().toLowerCase() === (current || '').trim().toLowerCase()) {
+              pre = eligibleVendedores[ii].id;
+              break;
+            }
+          }
+        }
+        var opts = '<option value="">— Limpar —</option>';
+        for (var j = 0; j < eligibleVendedores.length; j++) {
+          var u = eligibleVendedores[j];
+          var sel = pre === u.id ? ' selected' : '';
+          opts += '<option value="' + esc(u.id) + '" data-nome="' + esc(u.name) + '"' + sel + '>' + esc(u.name) + '</option>';
+        }
+        return '<td class="vendedor-cell"><div class="vendedor-row">' +
+          '<select class="vendedor-input vendedor-select" data-email="' + esc(email) + '">' + opts + '</select>' +
+          '<button type="button" class="btn btn-secondary btn-guardar vendedor-save" data-email="' + esc(email) + '">Guardar</button>' +
+          '</div></td>';
+      }
+      return '<td class="vendedor-cell"><span class="vendedor-readonly">' + esc(current || '–') + '</span></td>';
     }
 
     function rowToHtml(row) {
@@ -164,10 +194,11 @@
       var pct = META_VALOR > 0 ? (vl / META_VALOR) * 100 : 0;
       row._pct = pct;
       var pctStr = pct >= 100 ? '100%+' : (pct.toFixed(1).replace('.', ',') + '%');
+      var vid = assignmentUserIds[emailKey(row.Email)];
       return '<tr>' +
         '<td>' + esc(row.Nome || '–') + '</td>' +
         '<td>' + esc(row.Email || '–') + '</td>' +
-        vendedorCellHtml(row.Email, row.vendedor) +
+        vendedorCellHtml(row.Email, row.vendedor, vid) +
         '<td class="num">' + fmtMoney(row['Vendas líquidas']) + '</td>' +
         '<td class="num">' + fmtMoney(META_VALOR) + '</td>' +
         '<td class="num ' + pctClass(pct) + '">' + pctStr + '</td>' +
@@ -271,19 +302,23 @@
       applyCarteiraFilter();
     }
 
-    function persistVendedor(email, nome, done) {
+    function persistVendedor(email, nome, vendedorUserId, done) {
       var k = emailKey(email);
       if (!k) { if (done) done(false); return; }
       if (useServerDb) {
+        var payload = { producer_email: email, vendedor_nome: nome };
+        if (vendedorUserId) payload.vendedor_user_id = vendedorUserId;
         fetch('/api/comercial/carteira', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ producer_email: email, vendedor_nome: nome })
+          body: JSON.stringify(payload)
         })
           .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, j: j }; }); })
           .then(function(x) {
             if (x.ok) {
               if (nome) assignments[k] = nome; else delete assignments[k];
+              if (x.j && x.j.vendedor_user_id) assignmentUserIds[k] = x.j.vendedor_user_id;
+              else if (!nome) delete assignmentUserIds[k];
               for (var i = 0; i < dadosFonte.length; i++) {
                 if (emailKey(dadosFonte[i].Email) === k) { dadosFonte[i].vendedor = nome || ''; break; }
               }
@@ -320,8 +355,16 @@
       var email = btn.getAttribute('data-email');
       var tr = btn.closest('tr');
       var inp = tr ? tr.querySelector('.vendedor-input') : null;
-      var nome = inp ? (inp.value || '').trim() : '';
-      persistVendedor(email, nome);
+      var nome = '';
+      var vid = '';
+      if (inp && inp.tagName === 'SELECT') {
+        vid = (inp.value || '').trim();
+        var opt = inp.options[inp.selectedIndex];
+        nome = vid && opt ? (opt.getAttribute('data-nome') || opt.textContent || '').trim() : '';
+      } else if (inp) {
+        nome = (inp.value || '').trim();
+      }
+      persistVendedor(email, nome, vid);
     });
 
     document.getElementById('somenteMinhaCarteira').addEventListener('change', function() {
@@ -336,20 +379,42 @@
 
     loadMeuNome();
 
-    Promise.all([
-      loadMetaValor(),
-      fetch('/api/comercial/carteira').then(function(r) { return r.json(); }),
-      fetch('/api/ultimo-relatorio').then(function(r) { return r.json(); })
-    ])
+    fetch('/api/me', { credentials: 'same-origin' })
+      .then(function(r) { return r.json(); })
+      .then(function(me) {
+        canEditCarteira = !!(me && me.authenticated && me.can_edit_carteira_comercial);
+        vendedorOnlyMode = !!(me && me.is_somente_vendedor_comercial);
+        if (vendedorOnlyMode) {
+          var filtEl = document.querySelector('.comercial-filtros');
+          if (filtEl) filtEl.style.display = 'none';
+          var actEl = document.querySelector('.page-header .actions');
+          if (actEl) actEl.style.display = 'none';
+        }
+        var promises = [
+          loadMetaValor(),
+          fetch('/api/comercial/carteira').then(function(r) { return r.json(); }),
+          fetch('/api/ultimo-relatorio').then(function(r) { return r.json(); })
+        ];
+        if (canEditCarteira) {
+          promises.push(fetch('/api/hub/applyfy-commercial-users', { credentials: 'same-origin' }).then(function(r) { return r.json(); }));
+        }
+        return Promise.all(promises);
+      })
       .then(function(parts) {
         var carteira = parts[1];
         var rel = parts[2];
+        if (canEditCarteira && parts[3] && parts[3].users) {
+          eligibleVendedores = parts[3].users;
+        }
         useServerDb = !!(carteira && carteira.db);
         document.getElementById('noDbWarning').hidden = useServerDb;
         if (useServerDb && carteira.assignments) {
           assignments = Object.assign({}, carteira.assignments);
         } else {
           assignments = Object.assign({}, getLocalCarteira());
+        }
+        if (useServerDb && carteira.assignment_user_ids) {
+          assignmentUserIds = Object.assign({}, carteira.assignment_user_ids);
         }
         renderRelatorio(rel);
       })

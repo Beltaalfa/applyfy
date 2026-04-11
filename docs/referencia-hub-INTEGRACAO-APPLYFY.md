@@ -53,6 +53,7 @@ Implementação: `src/lib/safe-post-login-redirect.ts`, `src/lib/post-login-dest
 | `HUB_APPLYFY_COOKIE_ENABLED` | Não | `0` desliga mesmo com segredo. |
 | `HUB_APPLYFY_JWT_EXPIRES_SEC` | Não | Default `86400`. |
 | `HUB_APPLYFY_JWT_INCLUDE_CLIENT_ID` | Não | `1` inclui no JWT o `client_id` do Hub (primeiro `UserClientPermission` do user cliente). Para allowlist no Applyfy (`APPLYFY_HUB_ALLOWED_PROJECT_IDS`). |
+| `HUB_APPLYFY_CLIENT_ID` | Não | Id do `Client` ApplyFy no Hub; se vazio, resolve por `subdomain=applyfy`. Usado nas permissões por tela. |
 | `NEXT_PUBLIC_APPLYFY_URL` | Recomendado | URL do painel (menu + validação de redirects externos). |
 | `NEXT_PUBLIC_APPLYFY_NAV_JSON` | Não | JSON opcional: array `{ "label", "path", "required" }` com `required` ∈ `painel` \| `financeiro` \| `jobs` \| `admin`. |
 | `NEXT_PUBLIC_POST_LOGIN_TRUSTED_HOST_SUFFIX` | Recomendado | Ex.: `northempresarial.com` — aceita `callbackUrl`/`next` para qualquer subdomínio (ex. Applyfy) mesmo que o URL exacto não estivesse no build. Se omitir, o Hub deriva um sufixo a partir do *hostname* de `NEXTAUTH_URL` (ex. `hub.x.com` → `x.com`). |
@@ -66,11 +67,12 @@ Implementação: `src/lib/safe-post-login-redirect.ts`, `src/lib/post-login-dest
 - `scope`: mesmas permissões separadas por espaço.
 - `hub_role`: `admin` \| `client` (informativo).
 - `client_id` (opcional): id do modelo `Client` no Hub, só com `HUB_APPLYFY_JWT_INCLUDE_CLIENT_ID=1` e utilizadores com role `client` e permissão associada.
+- `applyfy_screens` (opcional): array de paths de ecrã do painel; quando presente, o Applyfy restringe por tela. Gestão: Admin Hub → **ApplyFy — telas**; modelo `UserApplyfyScreenGrant`; lista canónica em `src/lib/applyfy-screens.ts`.
 
-**Mapeamento atual**
+**Mapeamento actual (permissions coarse)**
 
-- **admin** Hub → todas as permissões Applyfy.
-- **client** Hub → só `applyfy.painel` (ajustável em `src/lib/applyfy-permissions.ts`).
+- **admin** Hub → todas as permissões Applyfy (`applyfy.painel`, `applyfy.financeiro`, `applyfy.jobs`, `applyfy.admin`).
+- **client** Hub → `applyfy.painel`, `applyfy.financeiro`, `applyfy.jobs` (ver `src/lib/applyfy-permissions.ts`). O acesso fino por tela usa `applyfy_screens` quando configurado.
 
 ## Fluxo A (código + token URL)
 
@@ -84,6 +86,9 @@ Alinhar com o `.env.example` do Applyfy: `APPLYFY_AUTH_ENABLED`, `HUB_LOGIN_URL`
 
 - `src/lib/applyfy-cookie.ts` — assinatura JWT e cookie.
 - `src/lib/applyfy-permissions.ts` — permissões Applyfy e regra do menu.
+- `src/lib/applyfy-screens.ts` — lista de ecrãs e mapeamento API → ecrã (sincronizar com `applyfy/applyfy_screens.py`).
+- `src/app/api/admin/applyfy-screens/route.ts` — API admin para `UserApplyfyScreenGrant`.
+- `src/app/admin/config/applyfy-permissoes/` — UI de checkboxes por utilizador.
 - `src/lib/safe-post-login-redirect.ts` — redirects seguros pós-login.
 - `src/app/middleware.ts` — cookie, redirect login, `callbackUrl` em rotas protegidas; **não** cobre `/hub/bridge`.
 - `src/app/login/LoginForm.tsx` — após credentials, redirect externo via GET `/hub/bridge?to=...` (middleware).

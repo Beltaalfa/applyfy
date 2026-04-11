@@ -2,12 +2,13 @@
 """
 API Flask do painel Applyfy: último relatório (JSON) e download XLSX/CSV.
 """
+import json
 import os
 import subprocess
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
-from flask import Flask, Response, g, redirect, request, jsonify, send_file, send_from_directory
+from flask import Flask, Response, g, redirect, request, session, jsonify, send_file, send_from_directory
 from dotenv import load_dotenv
 
 import config
@@ -82,11 +83,24 @@ def _hub_auth_gate():
                 {"error": "unauthorized", "message": "Sessão ou cookie JWT do hub necessário"}
             ), 401
         return redirect(auth_hub.hub_login_url(auth_hub.effective_return_url()))
-    needed = auth_hub.required_permissions_for_path(path)
-    if needed and not auth_hub.session_has_permission(*needed):
-        if path.startswith("/api/"):
-            return jsonify({"error": "forbidden", "message": "Permissão insuficiente para este recurso"}), 403
-        return redirect(auth_hub.hub_login_url(auth_hub.effective_return_url()))
+    if auth_hub.hub_uses_granular_screens():
+        if not auth_hub.session_can_access_path(path):
+            if path.startswith("/api/"):
+                return jsonify({"error": "forbidden", "message": "Sem acesso a este recurso (ecrã não autorizado)"}), 403
+            return Response(
+                "<!DOCTYPE html><html lang=\"pt-BR\"><head><meta charset=\"utf-8\"><title>Acesso negado</title></head>"
+                "<body style=\"font-family:sans-serif;max-width:32rem;margin:3rem auto;padding:1rem;\">"
+                "<h1>Acesso negado</h1><p>Sem permissão para este ecrã.</p>"
+                f"<p><a href=\"{auth_hub.hub_logout_url()}\">Voltar ao Hub</a></p></body></html>",
+                403,
+                mimetype="text/html; charset=utf-8",
+            )
+    else:
+        needed = auth_hub.required_permissions_for_path(path)
+        if needed and not auth_hub.session_has_permission(*needed):
+            if path.startswith("/api/"):
+                return jsonify({"error": "forbidden", "message": "Permissão insuficiente para este recurso"}), 403
+            return redirect(auth_hub.hub_login_url(auth_hub.effective_return_url()))
     return None
 
 
@@ -185,6 +199,192 @@ def agent_client_debug_log():
 @app.route("/api/me")
 def api_me():
     return jsonify(auth_hub.hub_me_payload())
+
+
+def _hub_public_hostname() -> str:
+    """Hostname público do Hub (NextAuth associa cookies a este host)."""
+    raw = (os.environ.get("HUB_INTERNAL_HOST") or "").strip()
+    if raw:
+        return raw.split("/")[0].split(":")[0]
+    login = (os.environ.get("HUB_LOGIN_URL") or "").strip()
+    if login:
+        try:
+            from urllib.parse import urlparse
+
+            h = urlparse(login if "://" in login else f"https://{login}").hostname
+            if h:
+                return h
+        except Exception:
+            pass
+    return "hub.northempresarial.com"
+
+
+def _hub_internal_http_request(rel_path: str, method: str = "GET", body: bytes | None = None) -> tuple[int, bytes]:
+    """HTTP ao Hub interno com Host público (NextAuth). rel_path ex.: /api/applyfy/commercial-users"""
+    import http.client
+    from urllib.parse import urlparse
+
+    base = (os.environ.get("HUB_INTERNAL_URL") or "http://127.0.0.1:3007").rstrip("/")
+    parsed = urlparse(base)
+    conn_host = parsed.hostname or "127.0.0.1"
+    scheme = (parsed.scheme or "http").lower()
+    conn_port = parsed.port or (443 if scheme == "https" else 80)
+    cookie = request.headers.get("Cookie") or ""
+    public_host = _hub_public_hostname()
+    _xf = (request.headers.get("X-Forwarded-Proto") or "https").split(",")[0].strip().lower()
+    xf_proto = _xf if _xf in ("http", "https") else "https"
+    headers = {
+        "Host": public_host,
+        "Cookie": cookie,
+        "Accept": "application/json",
+        "X-Forwarded-Host": public_host,
+        "X-Forwarded-Proto": xf_proto,
+        "X-Forwarded-For": request.headers.get("X-Forwarded-For") or (request.remote_addr or "127.0.0.1"),
+    }
+    if body is not None:
+        headers["Content-Type"] = request.headers.get("Content-Type") or "application/json"
+    path = rel_path if rel_path.startswith("/") else "/" + rel_path
+    try:
+        if scheme == "https":
+            conn = http.client.HTTPSConnection(conn_host, conn_port, timeout=90)
+        else:
+            conn = http.client.HTTPConnection(conn_host, conn_port, timeout=90)
+        conn.request(method.upper(), path, body=body, headers=headers)
+        resp = conn.getresponse()
+        data = resp.read()
+        status = resp.status
+        conn.close()
+        return status, data
+    except Exception:
+        return 0, b""
+
+
+def _carteira_assign_visible(rec: dict, sub: str | None, name_lower: str) -> bool:
+    vid = rec.get("vendedor_user_id")
+    vnom = (rec.get("vendedor_nome") or "").strip().lower()
+    if vid and sub and vid == sub:
+        return True
+    if not vid and name_lower and vnom == name_lower:
+        return True
+    return False
+
+
+def _filter_relatorio_vendedor_comercial(resultados: list) -> list:
+    if not resultados:
+        return []
+    sub = session.get("hub_sub")
+    name_lower = (session.get("hub_user_name") or "").strip().lower()
+    items = db.list_producer_vendedor()
+    by_email: dict[str, dict] = {}
+    for i in items:
+        k = db._normalize_producer_email(i.get("producer_email"))
+        if k:
+            by_email[k] = i
+    out = []
+    for row in resultados:
+        if not isinstance(row, dict):
+            continue
+        em = db._normalize_producer_email(row.get("Email"))
+        if not em:
+            continue
+        rec = by_email.get(em)
+        if not rec or not _carteira_assign_visible(rec, sub, name_lower):
+            continue
+        out.append(row)
+    return out
+
+
+def _hub_commercial_user_ids_allowed() -> set[str] | None:
+    st, raw = _hub_internal_http_request("/api/applyfy/commercial-users")
+    if st != 200 or not raw:
+        return None
+    try:
+        j = json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+    users = j.get("users") or []
+    return {str(u["id"]) for u in users if isinstance(u, dict) and u.get("id")}
+
+
+@app.route("/api/hub/applyfy-screen-grants", methods=["GET", "PUT"])
+def api_hub_applyfy_screen_grants_proxy():
+    """
+    Proxy para o Hub (Next.js) /api/admin/applyfy-screens.
+    Reenvia Cookie e usa Host público do Hub — pedidos só a 127.0.0.1 com Host=hub.*
+    quebram a sessão NextAuth.
+    """
+    import http.client
+    from urllib.parse import urlparse
+
+    base = (os.environ.get("HUB_INTERNAL_URL") or "http://127.0.0.1:3007").rstrip("/")
+    parsed = urlparse(base)
+    conn_host = parsed.hostname or "127.0.0.1"
+    scheme = (parsed.scheme or "http").lower()
+    if scheme == "https":
+        conn_port = parsed.port or 443
+    else:
+        conn_port = parsed.port or 80
+    path = "/api/admin/applyfy-screens"
+    cookie = request.headers.get("Cookie") or ""
+    public_host = _hub_public_hostname()
+    _xf = (request.headers.get("X-Forwarded-Proto") or "https").split(",")[0].strip().lower()
+    xf_proto = _xf if _xf in ("http", "https") else "https"
+
+    headers = {
+        "Host": public_host,
+        "Cookie": cookie,
+        "Accept": "application/json",
+        "X-Forwarded-Host": public_host,
+        "X-Forwarded-Proto": xf_proto,
+        "X-Forwarded-For": request.headers.get("X-Forwarded-For") or (request.remote_addr or "127.0.0.1"),
+    }
+
+    try:
+        body = None
+        method = request.method.upper()
+        if method == "PUT":
+            body = request.get_data()
+            headers["Content-Type"] = request.headers.get("Content-Type") or "application/json"
+
+        if scheme == "https":
+            conn = http.client.HTTPSConnection(conn_host, conn_port, timeout=90)
+        else:
+            conn = http.client.HTTPConnection(conn_host, conn_port, timeout=90)
+
+        conn.request(method, path, body=body, headers=headers)
+        resp = conn.getresponse()
+        data = resp.read()
+        ct = resp.getheader("Content-Type") or "application/json"
+        mimetype = (ct.split(";")[0] or "application/json").strip()
+        status = resp.status
+        conn.close()
+        return Response(data, status=status, mimetype=mimetype)
+    except Exception as ex:  # noqa: BLE001
+        app.logger.exception("api_hub_applyfy_screen_grants_proxy")
+        return jsonify({"error": "proxy_hub", "message": str(ex)[:300]}), 502
+
+
+@app.route("/api/hub/applyfy-commercial-users", methods=["GET"])
+def api_hub_applyfy_commercial_users_proxy():
+    """Proxy para Hub GET /api/applyfy/commercial-users (dropdown vendedores)."""
+    st, data = _hub_internal_http_request("/api/applyfy/commercial-users")
+    if st == 0:
+        app.logger.exception("api_hub_applyfy_commercial_users_proxy")
+        return jsonify({"error": "proxy_hub"}), 502
+    return Response(data, status=st, mimetype="application/json")
+
+
+@app.route("/api/hub/applyfy-user-commercial-config", methods=["GET", "PUT"])
+@app.route("/api/hub/applyfy_user_commercial_config", methods=["GET", "PUT"])
+def api_hub_applyfy_user_commercial_config_proxy():
+    """Proxy para Hub /api/applyfy/user-commercial-config (flags comercial / gerente no Hub DB)."""
+    method = request.method.upper()
+    body = request.get_data() if method == "PUT" else None
+    st, data = _hub_internal_http_request("/api/applyfy/user-commercial-config", method, body)
+    if st == 0:
+        app.logger.exception("api_hub_applyfy_user_commercial_config_proxy")
+        return jsonify({"error": "proxy_hub"}), 502
+    return Response(data, status=st, mimetype="application/json")
 
 
 def _persist_applyfy_webhook(payload: dict, request_id_header: str = "") -> tuple[str, str | None]:
@@ -429,11 +629,17 @@ def api_admin_webhook_dlq_retry():
 @app.route("/api/ultimo-relatorio")
 def api_ultimo_relatorio():
     dados, run_at = _get_ultimo_dados()
+    if dados is None:
+        dados = []
+    if auth_hub.auth_enabled() and auth_hub.session_is_somente_vendedor_comercial():
+        dados = _filter_relatorio_vendedor_comercial(dados)
     return jsonify({"run_at": run_at, "resultados": dados, "total": len(dados)})
 
 
 @app.route("/api/exportar")
 def api_exportar():
+    if auth_hub.auth_enabled() and auth_hub.session_is_somente_vendedor_comercial():
+        return jsonify({"error": "Exportação indisponível para o seu perfil"}), 403
     fmt = (request.args.get("formato") or "csv").lower()
     run_at_str = request.args.get("run_at")
     if run_at_str and db.DATABASE_URL:
@@ -1175,6 +1381,18 @@ def meta_page():
     return send_from_directory(app.static_folder, "meta.html")
 
 
+@app.route("/permissoes")
+def permissoes_page():
+    return send_from_directory(app.static_folder, "permissoes.html")
+
+
+@app.route("/config-comercial")
+@app.route("/config-comercial/")
+def config_comercial_page():
+    """Gestão de flags comercial / gerente (UserClientPermission no Hub); requer applyfy.admin."""
+    return send_from_directory(app.static_folder, "config-comercial.html")
+
+
 @app.route("/comercial")
 @app.route("/comercial/")
 def comercial_page():
@@ -1188,8 +1406,21 @@ def api_comercial_carteira_get():
         return jsonify({"assignments": {}, "items": [], "db": False})
     try:
         items = db.list_producer_vendedor()
+        if auth_hub.auth_enabled() and auth_hub.session_is_somente_vendedor_comercial():
+            sub = session.get("hub_sub")
+            name_lower = (session.get("hub_user_name") or "").strip().lower()
+            items = [i for i in items if _carteira_assign_visible(i, sub, name_lower)]
         assignments = {i["producer_email"]: i["vendedor_nome"] for i in items}
-        return jsonify({"assignments": assignments, "items": items, "db": True})
+        assignment_user_ids = {i["producer_email"]: i.get("vendedor_user_id") for i in items}
+        return jsonify(
+            {
+                "assignments": assignments,
+                "assignment_user_ids": assignment_user_ids,
+                "items": items,
+                "db": True,
+                "can_edit_carteira_comercial": auth_hub.session_can_edit_carteira_comercial(),
+            }
+        )
     except Exception as e:
         app.logger.exception("api_comercial_carteira_get")
         return jsonify({"error": str(e)[:200]}), 500
@@ -1197,7 +1428,9 @@ def api_comercial_carteira_get():
 
 @app.route("/api/comercial/carteira", methods=["PUT"])
 def api_comercial_carteira_put():
-    """Atribui ou remove vendedor (nome vazio remove)."""
+    """Atribui ou remove vendedor (nome vazio remove). Requer gerente comercial ou admin."""
+    if not auth_hub.session_can_edit_carteira_comercial():
+        return jsonify({"error": "Sem permissão para editar a carteira comercial"}), 403
     if not db.get_database_url():
         return jsonify({"error": "DATABASE_URL não configurado"}), 503
     data = request.get_json(silent=True) or {}
@@ -1207,13 +1440,34 @@ def api_comercial_carteira_put():
     nome = data.get("vendedor_nome")
     if nome is not None and not isinstance(nome, str):
         nome = str(nome)
+    raw_vid = data.get("vendedor_user_id")
+    if raw_vid is not None and not isinstance(raw_vid, str):
+        raw_vid = str(raw_vid)
+    vendedor_user_id = (raw_vid or "").strip() or None
     try:
-        ok = db.upsert_producer_vendedor(email, nome)
+        trimmed = (nome or "").strip()[:200]
+        if not trimmed:
+            ok = db.upsert_producer_vendedor(email, "", None)
+        else:
+            if not vendedor_user_id:
+                return jsonify({"error": "vendedor_user_id obrigatório ao atribuir vendedor"}), 400
+            allowed = _hub_commercial_user_ids_allowed()
+            if allowed is None:
+                return jsonify({"error": "Não foi possível validar vendedores no Hub"}), 502
+            if vendedor_user_id not in allowed:
+                return jsonify({"error": "Vendedor não permitido (exige flag comercial no Hub)"}), 400
+            ok = db.upsert_producer_vendedor(email, trimmed, vendedor_user_id)
         if not ok:
             return jsonify({"error": "Email de produtor inválido"}), 400
         key = (email or "").strip().lower()
-        trimmed = (nome or "").strip()[:200]
-        return jsonify({"ok": True, "producer_email": key, "vendedor_nome": trimmed})
+        return jsonify(
+            {
+                "ok": True,
+                "producer_email": key,
+                "vendedor_nome": trimmed,
+                "vendedor_user_id": vendedor_user_id if trimmed else None,
+            }
+        )
     except Exception as e:
         app.logger.exception("api_comercial_carteira_put")
         return jsonify({"error": str(e)[:200]}), 500

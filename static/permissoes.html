@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Permissões | Applyfy</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/painel-theme.css">
+  <style>
+    .perm-admin-wrap { display: none; }
+    .perm-admin-wrap.is-visible { display: block; }
+    .perm-readonly-wrap { display: block; }
+    .perm-readonly-wrap.is-hidden { display: none; }
+    .perm-user-list { list-style: none; margin: 0; padding: 0; max-width: 32rem; }
+    .perm-user-list li { margin: 0 0 0.5rem; }
+    .perm-user-open {
+      display: block; width: 100%; text-align: left; padding: 0.75rem 1rem;
+      border: 1px solid var(--border, #333); border-radius: 8px; background: rgba(255,255,255,0.03);
+      color: inherit; font: inherit; font-weight: 600; cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .perm-user-open:hover { background: rgba(255,255,255,0.08); border-color: var(--accent, #2563eb); }
+    .perm-user-open:focus-visible { outline: 2px solid var(--accent, #2563eb); outline-offset: 2px; }
+    .perm-modal { position: fixed; inset: 0; z-index: 300; display: flex; align-items: center; justify-content: center; padding: 1rem; box-sizing: border-box; }
+    .perm-modal[hidden] { display: none !important; }
+    .perm-modal-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,0.65); cursor: pointer; }
+    .perm-modal-dialog {
+      position: relative; width: 100%; max-width: 42rem; max-height: min(90vh, 720px); overflow: auto;
+      margin: auto; padding: 1.25rem; border-radius: 12px;
+      border: 1px solid var(--border, #333); background: var(--bg-elevated, #141414);
+      box-shadow: 0 16px 48px rgba(0,0,0,0.45);
+    }
+    .perm-modal-header { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 0.75rem; margin-bottom: 1rem; }
+    .perm-modal-header h2 { margin: 0; font-size: 1.125rem; font-weight: 600; }
+    .perm-modal-email { margin: 0.25rem 0 0; font-size: 0.85rem; color: var(--muted, #888); }
+    .perm-modal-close {
+      flex-shrink: 0; width: 2.25rem; height: 2.25rem; border: none; border-radius: 8px;
+      background: rgba(255,255,255,0.08); color: inherit; font-size: 1.35rem; line-height: 1; cursor: pointer;
+    }
+    .perm-modal-close:hover { background: rgba(255,255,255,0.14); }
+    .perm-modal-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border, #333); }
+    .btn-ghost { padding: 0.4rem 0.9rem; border-radius: 6px; border: 1px solid var(--border, #444); background: transparent; color: inherit; font-size: 0.875rem; cursor: pointer; }
+    .btn-ghost:hover { background: rgba(255,255,255,0.06); }
+    .perm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 0.5rem; margin-top: 0.75rem; }
+    .perm-grid label { display: flex; align-items: center; gap: 0.5rem; font-size: 0.875rem; cursor: pointer; }
+    .perm-msg { font-size: 0.875rem; color: var(--muted, #888); margin: 0.5rem 0 1rem; }
+    .perm-toast { margin: 0.5rem 0; padding: 0.5rem 0.75rem; border-radius: 6px; font-size: 0.875rem; display: none; }
+    .perm-toast.ok { display: block; background: rgba(22, 163, 74, 0.15); color: #16a34a; }
+    .perm-toast.err { display: block; background: rgba(220, 38, 38, 0.15); color: #dc2626; }
+    .btn-save { padding: 0.4rem 0.9rem; border-radius: 6px; border: none; cursor: pointer; background: var(--accent, #2563eb); color: #fff; font-size: 0.875rem; }
+    .btn-save:disabled { opacity: 0.6; cursor: not-allowed; }
+    .perm-commercial-wrap {
+      margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border, #333);
+    }
+    .perm-commercial-title { margin: 0 0 0.35rem; font-size: 0.9rem; font-weight: 600; }
+    .perm-commercial-hint { margin: 0 0 0.65rem; font-size: 0.8rem; color: var(--muted, #888); line-height: 1.4; }
+    .perm-commercial-row { display: flex; align-items: flex-start; gap: 0.5rem; margin: 0.45rem 0; font-size: 0.875rem; cursor: pointer; }
+    .perm-commercial-row input { margin-top: 0.15rem; flex-shrink: 0; }
+  </style>
+</head>
+<body data-active="/permissoes">
+  <div class="app-shell" id="app-shell">
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
+    <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
+    <div class="main-column">
+      <header class="top-bar">
+        <div class="top-bar-inner">
+          <h1 class="page-title" id="pageTitle">Permissões</h1>
+        </div>
+      </header>
+      <main class="main-content">
+        <div id="permToast" class="perm-toast" role="status"></div>
+
+        <div id="permReadonly" class="perm-readonly-wrap">
+          <p class="last-run" id="permHint">A carregar…</p>
+          <div class="card">
+            <div class="table-wrap flat">
+              <table>
+                <thead>
+                  <tr><th>Tela</th><th>Acesso</th></tr>
+                </thead>
+                <tbody id="permTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div id="permAdmin" class="perm-admin-wrap">
+          <p class="perm-msg" id="permAdminIntro"></p>
+          <div id="permAdminInner"></div>
+          <div id="permModal" class="perm-modal" hidden aria-hidden="true">
+            <div class="perm-modal-backdrop" id="permModalBackdrop" aria-hidden="true"></div>
+            <div class="perm-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="permModalTitle">
+              <div class="perm-modal-header">
+                <div>
+                  <h2 id="permModalTitle"></h2>
+                  <p id="permModalEmail" class="perm-modal-email"></p>
+                </div>
+                <button type="button" class="perm-modal-close" id="permModalClose" aria-label="Fechar">×</button>
+              </div>
+              <div id="permModalGrid" class="perm-grid"></div>
+              <div id="permModalCommercialMount" class="perm-commercial-wrap" hidden></div>
+              <div class="perm-modal-actions">
+                <button type="button" class="btn-ghost" id="permModalCancel">Cancelar</button>
+                <button type="button" class="btn-save" id="permModalSave">Guardar</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="/static/painel-shell.js" defer></script>
+  <script>
+(function () {
+  var LABELS = {
+    "/": "Painel",
+    "/historico": "Histórico",
+    "/evolucao": "Evolução",
+    "/vendas": "Vendas",
+    "/log-vendas": "Log vendas",
+    "/transacoes": "Transações",
+    "/integracoes": "Integrações",
+    "/meta": "Meta",
+    "/comercial": "Comercial",
+    "/produtores": "Produtores",
+    "/financeiro": "Financeiro",
+    "/log": "Log saldos",
+    "/permissoes": "Permissões"
+  };
+  var HUB_USUARIOS = "https://hub.northempresarial.com/admin/config/usuarios";
+  var HUB_LOGIN = "https://hub.northempresarial.com/login";
+
+  function toast(el, ok, text) {
+    el.className = "perm-toast " + (ok ? "ok" : "err");
+    el.textContent = text;
+  }
+  function hideToast(el) {
+    el.className = "perm-toast";
+    el.textContent = "";
+  }
+
+  function row(href, label, ok) {
+    var tr = document.createElement("tr");
+    var td1 = document.createElement("td");
+    td1.textContent = label + " (" + href + ")";
+    var td2 = document.createElement("td");
+    td2.textContent = ok ? "Sim" : "Não";
+    td2.style.fontWeight = ok ? "600" : "400";
+    td2.style.color = ok ? "var(--ok, #16a34a)" : "var(--muted, #737373)";
+    tr.appendChild(td1);
+    tr.appendChild(td2);
+    return tr;
+  }
+
+  function isApplyfyAdmin(me) {
+    var p = me.permissions || [];
+    return p.indexOf("applyfy.admin") >= 0;
+  }
+
+  function renderReadonly(me) {
+    var hint = document.getElementById("permHint");
+    var tbody = document.getElementById("permTbody");
+    document.getElementById("pageTitle").textContent = "As suas permissões";
+    if (!me || !me.authenticated) {
+      if (hint) hint.textContent = "Sessão não disponível.";
+      return;
+    }
+    if (hint) {
+      hint.textContent = me.applyfy_granular
+        ? "Lista baseada nas telas autorizadas para o seu utilizador (Hub)."
+        : "Lista baseada nas permissões do Hub (modo legado).";
+    }
+    var nav = me.nav || {};
+    Object.keys(LABELS).forEach(function (href) {
+      if (href === "/permissoes") return;
+      tbody.appendChild(row(href, LABELS[href], nav[href] !== false));
+    });
+    tbody.appendChild(row("/permissoes", LABELS["/permissoes"], nav["/permissoes"] !== false));
+  }
+
+  var permModalState = {
+    toastEl: null,
+    user: null,
+    screens: null,
+    draft: null,
+    draftCommercial: null,
+    escapeHandler: null,
+    wired: false,
+  };
+
+  function closePermModal() {
+    var m = document.getElementById("permModal");
+    if (!m) return;
+    m.setAttribute("hidden", "");
+    m.setAttribute("aria-hidden", "true");
+    if (permModalState.escapeHandler) {
+      document.removeEventListener("keydown", permModalState.escapeHandler);
+      permModalState.escapeHandler = null;
+    }
+    permModalState.user = null;
+    permModalState.draft = null;
+    permModalState.draftCommercial = null;
+    permModalState.screens = null;
+    var mount = document.getElementById("permModalCommercialMount");
+    if (mount) {
+      mount.innerHTML = "";
+      mount.hidden = true;
+    }
+  }
+
+  function permModalDoSave() {
+    var u = permModalState.user;
+    var screens = permModalState.screens;
+    var draft = permModalState.draft;
+    var toastEl = permModalState.toastEl;
+    if (!u || !screens || !draft) return;
+    var saveBtn = document.getElementById("permModalSave");
+    hideToast(toastEl);
+    var screenIds = screens
+      .filter(function (s) {
+        return draft[s.id];
+      })
+      .map(function (s) {
+        return s.id;
+      });
+    if (saveBtn) saveBtn.disabled = true;
+    var dc = permModalState.draftCommercial || { applyfyComercial: false, applyfyGerenteComercial: false };
+    fetch("/api/hub/applyfy-screen-grants", {
+      method: "PUT",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        userId: u.id,
+        screenIds: screenIds,
+        applyfyComercial: !!dc.applyfyComercial,
+        applyfyGerenteComercial: !!dc.applyfyGerenteComercial,
+      }),
+    })
+      .then(function (r) {
+        return r.json().then(function (j) {
+          return { ok: r.ok, j: j };
+        });
+      })
+      .then(function (x) {
+        if (saveBtn) saveBtn.disabled = false;
+        if (x.ok) {
+          u.screenIds = screenIds;
+          u.applyfyComercial = !!dc.applyfyComercial;
+          u.applyfyGerenteComercial = !!dc.applyfyGerenteComercial;
+          toast(toastEl, true, "Permissões atualizadas. O utilizador deve voltar a aceder ao painel (ou esperar renovação do cookie).");
+          closePermModal();
+        } else {
+          toast(toastEl, false, (x.j && x.j.error) || "Erro ao guardar");
+        }
+      })
+      .catch(function () {
+        if (saveBtn) saveBtn.disabled = false;
+        toast(toastEl, false, "Erro de rede ao guardar.");
+      });
+  }
+
+  function wirePermModalOnce() {
+    if (permModalState.wired) return;
+    permModalState.wired = true;
+    document.getElementById("permModalBackdrop").addEventListener("click", closePermModal);
+    document.getElementById("permModalClose").addEventListener("click", closePermModal);
+    document.getElementById("permModalCancel").addEventListener("click", closePermModal);
+    document.getElementById("permModalSave").addEventListener("click", permModalDoSave);
+  }
+
+  function openPermModal(u, screens, toastEl) {
+    if (permModalState.escapeHandler) {
+      document.removeEventListener("keydown", permModalState.escapeHandler);
+      permModalState.escapeHandler = null;
+    }
+    wirePermModalOnce();
+    permModalState.toastEl = toastEl;
+    permModalState.user = u;
+    permModalState.screens = screens;
+    var draft = {};
+    if (u.screenIds === null) {
+      screens.forEach(function (s) {
+        draft[s.id] = true;
+      });
+    } else {
+      (u.screenIds || []).forEach(function (id) {
+        draft[id] = true;
+      });
+    }
+    permModalState.draft = draft;
+    permModalState.draftCommercial = {
+      applyfyComercial: !!u.applyfyComercial,
+      applyfyGerenteComercial: !!u.applyfyGerenteComercial,
+    };
+
+    document.getElementById("permModalTitle").textContent = u.name || "(sem nome)";
+    document.getElementById("permModalEmail").textContent = u.email || "";
+
+    var grid = document.getElementById("permModalGrid");
+    grid.innerHTML = "";
+    screens.forEach(function (s) {
+      var lab = document.createElement("label");
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!draft[s.id];
+      cb.addEventListener("change", function () {
+        draft[s.id] = cb.checked;
+      });
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(s.label + " (" + s.id + ")"));
+      grid.appendChild(lab);
+    });
+
+    var mount = document.getElementById("permModalCommercialMount");
+    if (mount) {
+      mount.innerHTML = "";
+      mount.hidden = false;
+      var t = document.createElement("p");
+      t.className = "perm-commercial-title";
+      t.textContent = "Carteira comercial";
+      mount.appendChild(t);
+      var hint = document.createElement("p");
+      hint.className = "perm-commercial-hint";
+      hint.textContent =
+        "Comercial: pode ser escolhido como vendedor no ecrã Comercial. Gerente: pode alterar atribuições vendedor → produtor. O JWT do Hub é renovado quando o utilizador volta a entrar no painel.";
+      mount.appendChild(hint);
+      var dc = permModalState.draftCommercial;
+      function rowComercial(id, label, key) {
+        var lab = document.createElement("label");
+        lab.className = "perm-commercial-row";
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.id = id;
+        cb.checked = !!dc[key];
+        cb.addEventListener("change", function () {
+          dc[key] = cb.checked;
+        });
+        lab.appendChild(cb);
+        lab.appendChild(document.createTextNode(label));
+        mount.appendChild(lab);
+      }
+      rowComercial("permCbComercial", "Comercial (vendedor no dropdown da carteira)", "applyfyComercial");
+      rowComercial("permCbGerente", "Gerente comercial (editar atribuições vendedor → produtor)", "applyfyGerenteComercial");
+    }
+
+    var m = document.getElementById("permModal");
+    m.removeAttribute("hidden");
+    m.setAttribute("aria-hidden", "false");
+    var closeBtn = document.getElementById("permModalClose");
+    if (closeBtn && typeof closeBtn.focus === "function") {
+      closeBtn.focus();
+    }
+
+    permModalState.escapeHandler = function (e) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        closePermModal();
+      }
+    };
+    document.addEventListener("keydown", permModalState.escapeHandler);
+  }
+
+  function renderAdmin(data, toastEl) {
+    var inner = document.getElementById("permAdminInner");
+    var intro = document.getElementById("permAdminIntro");
+    document.getElementById("pageTitle").textContent = "Permissões por tela — ApplyFy";
+    inner.innerHTML = "";
+    if (data.configured === false && data.message) {
+      intro.textContent = data.message;
+      return;
+    }
+    intro.innerHTML =
+      "Utilizadores com a empresa ApplyFy no cadastro (permissão de cliente). " +
+      (data.clientName ? "Cliente: <strong>" + data.clientName + "</strong>. " : "") +
+      'Associar utilizadores no <a href="' +
+      HUB_USUARIOS +
+      '" target="_blank" rel="noopener">Hub → Usuários</a>.';
+
+    var screens = data.screens || [];
+    var users = data.users || [];
+    if (!screens.length) {
+      inner.appendChild(document.createTextNode("Lista de ecrãs indisponível."));
+      return;
+    }
+    if (!users.length) {
+      inner.appendChild(document.createTextNode("Nenhum utilizador cliente com permissão ao cliente ApplyFy."));
+      return;
+    }
+
+    var ul = document.createElement("ul");
+    ul.className = "perm-user-list";
+    users.forEach(function (u) {
+      var li = document.createElement("li");
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "perm-user-open";
+      btn.textContent = u.name || u.email || "(sem nome)";
+      btn.addEventListener("click", function () {
+        openPermModal(u, screens, toastEl);
+      });
+      li.appendChild(btn);
+      ul.appendChild(li);
+    });
+    inner.appendChild(ul);
+  }
+
+  function escapeHtml(s) {
+    var d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  fetch("/api/me", { credentials: "same-origin" })
+    .then(function (r) {
+      return r.json();
+    })
+    .then(function (me) {
+      var toastEl = document.getElementById("permToast");
+      var ro = document.getElementById("permReadonly");
+      var adm = document.getElementById("permAdmin");
+      if (!me || !me.authenticated) {
+        document.getElementById("permHint").textContent = "Sessão não disponível.";
+        return;
+      }
+      if (isApplyfyAdmin(me)) {
+        ro.classList.add("is-hidden");
+        adm.classList.add("is-visible");
+        fetch("/api/hub/applyfy-screen-grants", { credentials: "same-origin" })
+          .then(function (r) {
+            return r.text().then(function (t) {
+              var j = null;
+              try {
+                j = t ? JSON.parse(t) : null;
+              } catch (e) {
+                j = null;
+              }
+              return { ok: r.ok, status: r.status, body: j, raw: t };
+            });
+          })
+          .then(function (x) {
+            var intro = document.getElementById("permAdminIntro");
+            if (!x.ok) {
+              var msg = "O Hub respondeu HTTP " + x.status + ". ";
+              if (x.status === 401 || x.status === 403) {
+                msg +=
+                  "Inicie sessão no Hub (" +
+                  HUB_LOGIN +
+                  ") com uma conta admin; o cookie do Hub deve cobrir este domínio (ex.: .northempresarial.com).";
+              } else if (x.body && x.body.message) {
+                msg += String(x.body.message);
+              } else if (x.body && x.body.error) {
+                msg += String(x.body.error);
+              } else {
+                msg += (x.raw && x.raw.slice(0, 240)) || "sem corpo.";
+              }
+              intro.textContent = msg;
+              return;
+            }
+            if (!x.body) {
+              intro.textContent = "Resposta inválida do Hub (JSON esperado).";
+              return;
+            }
+            renderAdmin(x.body, toastEl);
+          })
+          .catch(function () {
+            document.getElementById("permAdminIntro").textContent =
+              "Erro de rede ou timeout ao proxy do Hub. Confirme HUB_INTERNAL_URL, reinicie o Applyfy após alterar .env e que o Hub (pm2) está a ouvir na porta correcta.";
+          });
+      } else {
+        renderReadonly(me);
+      }
+    })
+    .catch(function () {
+      document.getElementById("permHint").textContent = "Não foi possível carregar /api/me.";
+    });
+})();
+  </script>
+</body>
+</html>

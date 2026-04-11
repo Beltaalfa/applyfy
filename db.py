@@ -153,6 +153,15 @@ def init_db():
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_applyfy_producer_vendedor_nome ON applyfy_producer_vendedor (vendedor_nome);"
         )
+        try:
+            cur.execute(
+                "ALTER TABLE applyfy_producer_vendedor ADD COLUMN IF NOT EXISTS vendedor_user_id TEXT;"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_applyfy_producer_vendedor_user ON applyfy_producer_vendedor (vendedor_user_id);"
+            )
+        except Exception:
+            pass
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS financeiro_categorias (
@@ -750,7 +759,7 @@ def _normalize_producer_email(email: str | None) -> str:
 def list_producer_vendedor():
     """
     Carteira comercial: atribuição vendedor → produtor (email do export).
-    Retorna lista de { producer_email, vendedor_nome, updated_at }.
+    Retorna lista de { producer_email, vendedor_nome, vendedor_user_id, updated_at }.
     """
     if not get_database_url():
         return []
@@ -758,7 +767,7 @@ def list_producer_vendedor():
     with cursor() as cur:
         cur.execute(
             """
-            SELECT producer_email, vendedor_nome, updated_at
+            SELECT producer_email, vendedor_nome, vendedor_user_id, updated_at
             FROM applyfy_producer_vendedor
             ORDER BY lower(vendedor_nome), producer_email;
             """
@@ -766,20 +775,22 @@ def list_producer_vendedor():
         rows = cur.fetchall()
     out = []
     for r in rows:
-        ts = r[2]
+        ts = r[3]
         out.append(
             {
                 "producer_email": r[0],
                 "vendedor_nome": r[1],
+                "vendedor_user_id": r[2],
                 "updated_at": ts.isoformat() if hasattr(ts, "isoformat") else str(ts),
             }
         )
     return out
 
 
-def upsert_producer_vendedor(producer_email, vendedor_nome):
+def upsert_producer_vendedor(producer_email, vendedor_nome, vendedor_user_id=None):
     """
     Define o vendedor do produtor. vendedor_nome vazio remove a linha.
+    vendedor_user_id: id Hub (User.id) quando atribuição vem do dropdown.
     Retorna True se alterou a BD, False se sem URL ou email inválido.
     """
     if not get_database_url():
@@ -788,6 +799,7 @@ def upsert_producer_vendedor(producer_email, vendedor_nome):
     if not key:
         return False
     nome = (vendedor_nome or "").strip()[:200]
+    uid = (vendedor_user_id or "").strip() or None
     init_db()
     with cursor() as cur:
         if not nome:
@@ -795,13 +807,14 @@ def upsert_producer_vendedor(producer_email, vendedor_nome):
             return True
         cur.execute(
             """
-            INSERT INTO applyfy_producer_vendedor (producer_email, vendedor_nome, updated_at)
-            VALUES (%s, %s, NOW())
+            INSERT INTO applyfy_producer_vendedor (producer_email, vendedor_nome, vendedor_user_id, updated_at)
+            VALUES (%s, %s, %s, NOW())
             ON CONFLICT (producer_email) DO UPDATE SET
                 vendedor_nome = EXCLUDED.vendedor_nome,
+                vendedor_user_id = EXCLUDED.vendedor_user_id,
                 updated_at = NOW();
             """,
-            (key, nome),
+            (key, nome, uid),
         )
     return True
 

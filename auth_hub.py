@@ -7,6 +7,9 @@ Contrato alinhado com o Hub (HS256, sem iss/aud):
 - exp / iat: standard JWT
 - permissions: array de strings; scope: join com espaço (redundante)
 - hub_role: "admin" | "client" (informativo na API /api/me)
+- applyfy_screens: opcional; lista de paths de ecrã (ex. /vendas). Se presente, o gate usa só esta lista + applyfy.admin.
+- email, name: opcionais (perfil Hub no JWT).
+- applyfy.comercial / applyfy.comercial.gerente: flags de carteira comercial (Hub UserClientPermission).
 
 Segredo: no Applyfy use HUB_JWT_SECRET (ou HUB_APPLYFY_JWT_SECRET com o mesmo valor que HUB_APPLYFY_JWT_SECRET no Hub).
 Cookie: HUB_JWT_COOKIE_NAME = nome no Hub HUB_APPLYFY_COOKIE_NAME (default access_token).
@@ -24,6 +27,8 @@ from functools import wraps
 from typing import Any
 
 from flask import Request, g, jsonify, redirect, request, session
+
+from applyfy_screens import normalize_applyfy_path, path_to_screen_id
 
 try:
     import jwt
@@ -264,6 +269,18 @@ def payload_to_session(payload: dict[str, Any]) -> None:
     perms = _permissions_from_payload(payload)
     session["hub_permissions"] = perms
     session["hub_authenticated"] = bool(session.get("hub_sub"))
+    em = payload.get("email")
+    session["hub_user_email"] = str(em).strip() if em is not None and str(em).strip() else None
+    nm = payload.get("name")
+    session["hub_user_name"] = str(nm).strip() if nm is not None and str(nm).strip() else None
+    if "applyfy_screens" in payload:
+        raw = payload.get("applyfy_screens")
+        if isinstance(raw, list):
+            session["hub_allowed_screens"] = [str(x).strip() for x in raw if str(x).strip()]
+        else:
+            session["hub_allowed_screens"] = []
+    else:
+        session.pop("hub_allowed_screens", None)
 
 
 def clear_hub_session() -> None:
@@ -273,6 +290,9 @@ def clear_hub_session() -> None:
         "hub_role",
         "hub_permissions",
         "hub_authenticated",
+        "hub_allowed_screens",
+        "hub_user_email",
+        "hub_user_name",
         "oauth_state",
     ):
         session.pop(k, None)
@@ -335,6 +355,28 @@ def session_has_full_access() -> bool:
     return "applyfy.admin" in perms
 
 
+APPLYFY_PERM_COMERCIAL = "applyfy.comercial"
+APPLYFY_PERM_COMERCIAL_GERENTE = "applyfy.comercial.gerente"
+
+
+def session_can_edit_carteira_comercial() -> bool:
+    """Gerente comercial ou admin Applyfy podem alterar atribuições vendedor → produtor."""
+    if not auth_enabled():
+        return True
+    return session_has_full_access() or session_has_permission(APPLYFY_PERM_COMERCIAL_GERENTE)
+
+
+def session_is_somente_vendedor_comercial() -> bool:
+    """Vendedor comercial (vê só a própria carteira), sem gerente nem admin."""
+    if not auth_enabled():
+        return False
+    if session_has_full_access():
+        return False
+    if session_has_permission(APPLYFY_PERM_COMERCIAL_GERENTE):
+        return False
+    return session_has_permission(APPLYFY_PERM_COMERCIAL)
+
+
 def session_has_permission(*required: str) -> bool:
     if not auth_enabled():
         return True
@@ -346,6 +388,43 @@ def session_has_permission(*required: str) -> bool:
     if not have:
         return True
     return any(r in have for r in required)
+
+
+def hub_uses_granular_screens() -> bool:
+    """JWT trouxe applyfy_screens — o gate por ecrã substitui a verificação coarse por path."""
+    return "hub_allowed_screens" in session
+
+
+def session_can_access_path(path: str) -> bool:
+    """Quando hub_allowed_screens está na sessão, verifica se o path (HTML ou API) está coberto."""
+    if not auth_enabled():
+        return True
+    if not session.get("hub_authenticated"):
+        return False
+    if session_has_full_access():
+        return True
+    perms = session.get("hub_permissions") or []
+    if path.startswith("/api/admin"):
+        return "applyfy.admin" in perms
+    if path.startswith("/api/hub/applyfy-screen-grants"):
+        return "applyfy.admin" in perms
+    if path.startswith("/api/hub/applyfy-commercial-users"):
+        return "applyfy.admin" in perms or APPLYFY_PERM_COMERCIAL_GERENTE in perms
+    if path.startswith("/api/hub/applyfy-user-commercial-config") or path.startswith(
+        "/api/hub/applyfy_user_commercial_config"
+    ):
+        return "applyfy.admin" in perms
+    if normalize_applyfy_path(path) == "/permissoes":
+        return True
+    if normalize_applyfy_path(path) == "/config-comercial":
+        return "applyfy.admin" in perms
+    if "hub_allowed_screens" not in session:
+        return True
+    sid = path_to_screen_id(path)
+    if sid is None:
+        return False
+    allowed = set(session.get("hub_allowed_screens") or [])
+    return sid in allowed
 
 
 def require_hub_permission(*permissions: str):
@@ -394,6 +473,14 @@ def required_permissions_for_path(path: str) -> tuple[str, ...] | None:
             return ("applyfy.financeiro",)
         if path.startswith("/api/job-vendas") or path.startswith("/api/job"):
             return ("applyfy.jobs",)
+        if path.startswith("/api/hub/applyfy-screen-grants"):
+            return ("applyfy.admin",)
+        if path.startswith("/api/hub/applyfy-commercial-users"):
+            return ("applyfy.admin", APPLYFY_PERM_COMERCIAL_GERENTE)
+        if path.startswith("/api/hub/applyfy-user-commercial-config") or path.startswith(
+            "/api/hub/applyfy_user_commercial_config"
+        ):
+            return ("applyfy.admin",)
         if path.startswith("/api/admin"):
             return None
         return ("applyfy.painel",)
@@ -414,6 +501,8 @@ def required_permissions_for_path(path: str) -> tuple[str, ...] | None:
         return None
     if path.startswith("/static/"):
         return None
+    if normalize_applyfy_path(path) == "/config-comercial":
+        return ("applyfy.admin",)
     return ("applyfy.painel",)
 
 
@@ -423,8 +512,18 @@ def hub_me_payload() -> dict[str, Any]:
     if not session.get("hub_authenticated"):
         return {"auth_enabled": True, "authenticated": False, "nav": {}}
     perms = list(session.get("hub_permissions") or [])
-    nav = {href: session_has_permission(perm) for href, perm in NAV_PERMISSIONS.items()}
-    return {
+    if hub_uses_granular_screens():
+        allowed = set(session.get("hub_allowed_screens") or [])
+        nav = {}
+        for href in NAV_PERMISSIONS.keys():
+            if href == "/permissoes":
+                nav[href] = True
+            else:
+                nav[href] = href in allowed
+    else:
+        nav = {href: session_has_permission(perm) for href, perm in NAV_PERMISSIONS.items()}
+    nav["/config-comercial"] = "applyfy.admin" in perms
+    out: dict[str, Any] = {
         "auth_enabled": True,
         "authenticated": True,
         "hub_logout_url": hub_logout_url(),
@@ -432,10 +531,18 @@ def hub_me_payload() -> dict[str, Any]:
             "sub": session.get("hub_sub"),
             "project_id": session.get("hub_project_id"),
             "hub_role": session.get("hub_role"),
+            "email": session.get("hub_user_email"),
+            "name": session.get("hub_user_name"),
         },
         "permissions": perms,
         "nav": nav,
+        "applyfy_granular": hub_uses_granular_screens(),
+        "can_edit_carteira_comercial": session_can_edit_carteira_comercial(),
+        "is_somente_vendedor_comercial": session_is_somente_vendedor_comercial(),
     }
+    if hub_uses_granular_screens():
+        out["applyfy_screens"] = list(session.get("hub_allowed_screens") or [])
+    return out
 
 
 # Mapa href do menu -> permissão necessária (painel-shell.js)
@@ -452,4 +559,5 @@ NAV_PERMISSIONS: dict[str, str] = {
     "/produtores": "applyfy.painel",
     "/financeiro": "applyfy.financeiro",
     "/log": "applyfy.painel",
+    "/permissoes": "applyfy.painel",
 }
