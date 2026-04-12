@@ -412,6 +412,15 @@ def _persist_applyfy_webhook(payload: dict, request_id_header: str = "") -> tupl
         producer_id=producer_id,
         payload=payload,
     )
+    if status == "inserted":
+        try:
+            import applyfy_tx_facts
+
+            fact = applyfy_tx_facts.fact_from_webhook_payload(payload)
+            if fact:
+                db.upsert_tx_fact(fact)
+        except Exception as ex:
+            app.logger.warning("applyfy_tx_facts upsert (webhook): %s", str(ex))
     if status == "inserted" and event == "PRODUCER_CREATED" and producer_id:
         try:
             import applyfy_api
@@ -494,6 +503,20 @@ def _admin_or_hub_ok() -> bool:
     return False
 
 
+def _sync_transactions_auth_ok() -> bool:
+    """Sincronização: token admin; Hub applyfy.admin ou applyfy.jobs (mesmo critério que /integracoes); ou APPLYFY_SYNC_SECRET (cron)."""
+    if _admin_token_ok():
+        return True
+    if auth_hub.auth_enabled() and (
+        auth_hub.session_has_permission("applyfy.admin") or auth_hub.session_has_permission("applyfy.jobs")
+    ):
+        return True
+    secret = (os.environ.get("APPLYFY_SYNC_SECRET") or "").strip()
+    if secret:
+        return request.headers.get("X-Applyfy-Sync-Secret", "").strip() == secret
+    return False
+
+
 @app.route("/api/admin/waha-test", methods=["POST"])
 def api_admin_waha_test():
     """Teste WAHA; requer APPLYFY_ADMIN_TOKEN no header X-Applyfy-Admin-Token ou JSON/query token."""
@@ -556,6 +579,8 @@ def api_integracao_status():
     """Resumo para o painel: últimos timestamps e fila DLQ (sem segredos)."""
     out = {
         "last_export_run_at": None,
+        "last_rpa_at": None,
+        "last_api_tx_sync_at": None,
         "last_webhook_received_at": None,
         "export_stale": False,
         "webhook_silent": False,
@@ -578,6 +603,12 @@ def api_integracao_status():
             if stale_hours > 0:
                 le_aware = le if getattr(le, "tzinfo", None) else le.replace(tzinfo=timezone.utc)
                 out["export_stale"] = (now - le_aware) > timedelta(hours=stale_hours)
+        lrpa = db.get_last_rpa_activity_at()
+        if lrpa is not None:
+            out["last_rpa_at"] = lrpa.isoformat() if hasattr(lrpa, "isoformat") else str(lrpa)
+        lsync = db.get_last_applyfy_api_tx_sync_at()
+        if lsync is not None:
+            out["last_api_tx_sync_at"] = lsync.isoformat() if hasattr(lsync, "isoformat") else str(lsync)
         lw = db.get_last_webhook_received_at()
         if lw is not None:
             out["last_webhook_received_at"] = lw.isoformat() if hasattr(lw, "isoformat") else str(lw)
@@ -711,17 +742,75 @@ def api_relatorio_por_data():
         return jsonify({"error": str(e)}), 500
 
 
+def _producer_api_snapshot_by_email(email: str) -> dict | None:
+    """Saldos e totais cumulativos (GET …/producers) para um e-mail exacto."""
+    try:
+        import applyfy_api
+
+        em = (email or "").strip()
+        if not em:
+            return None
+        res, err = applyfy_api.list_producers({"nameOrEmail": em, "page": 1, "pageSize": 50})
+        if err or not res or res.get("success") is False:
+            return None
+        data = res.get("data") or {}
+        items = data.get("items") or []
+        key = em.lower()
+        for it in items:
+            if (it.get("email") or "").strip().lower() == key:
+                b = it.get("balances") or {}
+                t = it.get("totals") or {}
+                return {
+                    "pending": b.get("pending"),
+                    "fundLock": b.get("fundLock"),
+                    "available": b.get("available"),
+                    "withdrawn": t.get("withdrawn"),
+                    "sold": t.get("sold"),
+                    "chargeback": t.get("chargeback"),
+                }
+        return None
+    except Exception:
+        return None
+
+
 @app.route("/api/evolucao")
 def api_evolucao():
-    """Evolução dos saldos de um produtor (email) ao longo do tempo."""
+    """Evolução dos saldos (histórico Postgres) + snapshot e série diária via API Admin (sem cópia local)."""
     email = request.args.get("email")
     if not email:
         return jsonify({"error": "Informe email."}), 400
+    df = (request.args.get("from") or request.args.get("date_from") or "").strip()
+    dt = (request.args.get("to") or request.args.get("date_to") or "").strip()
     try:
-        dados = db.get_evolucao_produtor(email.strip())
-        return jsonify({"email": email, "dados": dados})
+        dados = db.get_evolucao_produtor(email.strip(), date_from=df or None, date_to=dt or None)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    snap = _producer_api_snapshot_by_email(email.strip())
+    series_diario = None
+    series_diario_error = None
+    series_diario_source = None
+    if df and dt:
+        import applyfy_tx_facts
+        import applyfy_tx_sync
+
+        em = email.strip()
+        items, tx_err = applyfy_tx_sync.fetch_all_transactions_period(em, df[:10], dt[:10])
+        if tx_err:
+            series_diario_error = (
+                tx_err.get("message", str(tx_err)) if isinstance(tx_err, dict) else str(tx_err)
+            )
+        else:
+            series_diario = applyfy_tx_facts.daily_series_from_items(items or [], df[:10], dt[:10])
+            series_diario_source = "api"
+    payload = {
+        "email": email.strip(),
+        "dados": dados,
+        "api_snapshot": snap,
+        "series_diario": series_diario,
+        "series_diario_error": series_diario_error,
+        "series_diario_source": series_diario_source,
+    }
+    return jsonify(payload)
 
 
 @app.route("/api/produtores")
@@ -732,6 +821,62 @@ def api_produtores():
         return jsonify(lista)
     except Exception:
         return jsonify([])
+
+
+@app.route("/api/internal/sync-transactions", methods=["POST"])
+def api_internal_sync_transactions():
+    """
+    Sincroniza transações da API Admin para applyfy_tx_facts (janela rolling ou intervalo por email).
+    Auth: Hub applyfy.admin ou applyfy.jobs; token admin; ou header X-Applyfy-Sync-Secret (APPLYFY_SYNC_SECRET) para cron.
+    JSON/query opcional: window_days (default env), email + from + to para um produtor.
+    """
+    if not _sync_transactions_auth_ok():
+        return jsonify({"error": "forbidden"}), 403
+    try:
+        import applyfy_tx_sync
+
+        body = request.get_json(silent=True) or {}
+        if not isinstance(body, dict):
+            body = {}
+        window = body.get("window_days")
+        if window is None:
+            window = request.args.get("window_days")
+        qa = (request.args.get("quick") or "").strip().lower()
+        quick = bool(body.get("quick")) or qa in ("1", "true", "yes", "on")
+        email = (body.get("email") or request.args.get("email") or "").strip()
+        d_from = (body.get("from") or request.args.get("from") or "").strip()
+        d_to = (body.get("to") or request.args.get("to") or "").strip()
+        if email and d_from and d_to:
+            n, err = applyfy_tx_sync.sync_producer_email_window(email, d_from[:10], d_to[:10])
+            return jsonify({"ok": True, "upserted": n, "error": err, "email": email})
+        try:
+            wd = int(window) if window is not None else None
+        except (TypeError, ValueError):
+            wd = None
+        max_producers = None
+        if quick:
+            try:
+                max_producers = int((os.environ.get("APPLYFY_SYNC_QUICK_MAX_PRODUCERS") or "50").strip() or "50")
+            except ValueError:
+                max_producers = 50
+            if body.get("max_producers") is not None:
+                try:
+                    max_producers = max(1, int(body.get("max_producers")))
+                except (TypeError, ValueError):
+                    pass
+            if wd is None:
+                try:
+                    wd = int((os.environ.get("APPLYFY_SYNC_QUICK_WINDOW_DAYS") or "3").strip() or "3")
+                except ValueError:
+                    wd = 3
+        meta = applyfy_tx_sync.sync_rolling_window_for_all_produtores(
+            window_days=wd,
+            max_producers=max_producers,
+        )
+        return jsonify({"ok": True, "sync_mode": "quick" if quick else "full", **meta})
+    except Exception as e:
+        app.logger.exception("api_internal_sync_transactions")
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 @app.route("/api/webhooks/applyfy", methods=["GET", "POST"])
@@ -869,6 +1014,116 @@ def api_transacoes():
         return jsonify({"columns": col_order, "transacoes": out, "total": len(out)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+def _gateway_args_to_dict():
+    """Query string plana para os filtros da API Admin (valores como string ou int)."""
+    raw = request.args.to_dict(flat=True)
+    out = {}
+    for k, v in raw.items():
+        if v is None or v == "":
+            continue
+        if k in ("page", "pageSize", "minDocumentsSent"):
+            try:
+                out[k] = int(v)
+            except (TypeError, ValueError):
+                out[k] = v
+        elif k.startswith("include") and str(v).lower() in ("1", "true", "yes", "on"):
+            out[k] = True
+        else:
+            out[k] = v
+    return out
+
+
+def _gateway_jsonify_error(err: dict):
+    """Resposta de erro da API Applyfy (dict) → status HTTP."""
+    if not isinstance(err, dict):
+        return jsonify({"success": False, "error": {"message": str(err)}}), 502
+    nested = err.get("error") if isinstance(err.get("error"), dict) else None
+    code = err.get("statusCode")
+    if nested:
+        code = nested.get("statusCode") or code
+    try:
+        code_i = int(code) if code is not None else 502
+    except (TypeError, ValueError):
+        code_i = 502
+    if not (400 <= code_i <= 599):
+        code_i = 502
+    if nested:
+        return jsonify({"success": False, "error": nested}), code_i
+    return jsonify({"success": False, "error": err}), code_i
+
+
+@app.route("/api/gateway/ping")
+def api_gateway_ping():
+    """
+    Diagnóstico de deploy: não chama a Applyfy nem exige chaves.
+    Se /api/gateway/producers der 404 mas este endpoint também der 404, o Gunicorn
+    está a correr código antigo — faça pull e: sudo systemctl restart applyfy-painel
+    """
+    return jsonify({"ok": True, "gateway": "admin-proxy", "routes": ["transactions", "producers", "producer"]}), 200
+
+
+@app.route("/api/gateway/transactions")
+def api_gateway_transactions():
+    """Proxy autenticado para GET …/gateway/admin/transactions (API cloud)."""
+    try:
+        import applyfy_api
+
+        raw = _gateway_args_to_dict()
+        res, err = applyfy_api.list_transactions(raw)
+        if err:
+            return _gateway_jsonify_error(err)
+        return jsonify(res if isinstance(res, dict) else {"success": True, "data": res})
+    except Exception as e:
+        app.logger.exception("api_gateway_transactions")
+        return jsonify({"success": False, "error": {"message": str(e)}}), 500
+
+
+@app.route("/api/gateway/producers")
+@app.route("/api/gateway/producers/")
+def api_gateway_producers():
+    """Proxy autenticado para GET …/gateway/admin/producers."""
+    try:
+        import applyfy_api
+
+        raw = _gateway_args_to_dict()
+        res, err = applyfy_api.list_producers(raw)
+        if err:
+            return _gateway_jsonify_error(err)
+        return jsonify(res if isinstance(res, dict) else {"success": True, "data": res})
+    except Exception as e:
+        app.logger.exception("api_gateway_producers")
+        return jsonify({"success": False, "error": {"message": str(e)}}), 500
+
+
+@app.route("/api/gateway/producer")
+def api_gateway_producer_by_email():
+    """Proxy autenticado para GET …/gateway/admin/producer?email=…"""
+    try:
+        import applyfy_api
+
+        raw = _gateway_args_to_dict()
+        email = (raw.pop("email", None) or "").strip()
+        if not email:
+            return jsonify({"success": False, "error": {"message": "Parâmetro email é obrigatório"}}), 400
+        inc_kyc = bool(raw.pop("includeKyc", False))
+        inc_payout = bool(raw.pop("includePayoutAccount", False))
+        inc_tax = bool(raw.pop("includeTaxes", False))
+        inc_doc = bool(raw.pop("includeDocuments", False))
+        res, err = applyfy_api.get_producer_by_email(
+            email,
+            include_kyc=inc_kyc,
+            include_payout_account=inc_payout,
+            include_taxes=inc_tax,
+            include_documents=inc_doc,
+        )
+        if err:
+            return _gateway_jsonify_error(err)
+        return jsonify(res if isinstance(res, dict) else {"success": True, "data": res})
+    except Exception as e:
+        app.logger.exception("api_gateway_producer_by_email")
+        return jsonify({"success": False, "error": {"message": str(e)}}), 500
 
 
 @app.route("/api/vendas")
@@ -1036,15 +1291,24 @@ def api_produtores_webhook():
 
 @app.route("/api/produtor/<producer_id>/detalhes")
 def api_produtor_detalhes(producer_id):
-    """Busca dados completos do produtor na API ApplyFy (GET /producer/{id} com includeTaxes)."""
+    """Busca dados do produtor na API ApplyFy (GET /producer/{id}). Query: includeTaxes, includeKyc, includePayoutAccount, includeDocuments (true/false)."""
     try:
         import applyfy_api
+
+        def _flag(name: str, default: bool) -> bool:
+            raw = (request.args.get(name) or "").strip().lower()
+            if raw in ("1", "true", "yes", "on"):
+                return True
+            if raw in ("0", "false", "no", ""):
+                return False
+            return default
+
         res, err = applyfy_api.get_producer(
             producer_id,
-            include_taxes=True,
-            include_kyc=False,
-            include_payout_account=False,
-            include_documents=False,
+            include_taxes=_flag("includeTaxes", True),
+            include_kyc=_flag("includeKyc", False),
+            include_payout_account=_flag("includePayoutAccount", False),
+            include_documents=_flag("includeDocuments", False),
         )
         if err:
             return jsonify({"error": err.get("message", str(err)), "success": False}), 502
@@ -1368,7 +1632,32 @@ def vendas_page():
 
 @app.route("/produtores")
 def produtores_page():
-    return send_from_directory(app.static_folder, "produtores.html")
+    return send_from_directory(
+        app.static_folder,
+        "produtores.html",
+        mimetype="text/html; charset=utf-8",
+        max_age=0,
+    )
+
+
+@app.route("/saldo")
+def saldo_page():
+    return send_from_directory(
+        app.static_folder,
+        "saldo.html",
+        mimetype="text/html; charset=utf-8",
+        max_age=0,
+    )
+
+
+@app.route("/taxas")
+def taxas_page():
+    return send_from_directory(
+        app.static_folder,
+        "taxas.html",
+        mimetype="text/html; charset=utf-8",
+        max_age=0,
+    )
 
 
 @app.route("/integracoes")
@@ -1389,8 +1678,8 @@ def permissoes_page():
 @app.route("/config-comercial")
 @app.route("/config-comercial/")
 def config_comercial_page():
-    """Gestão de flags comercial / gerente (UserClientPermission no Hub); requer applyfy.admin."""
-    return send_from_directory(app.static_folder, "config-comercial.html")
+    """Bookmark antigo: gestão comercial passou para a página Permissões."""
+    return redirect("/permissoes", code=302)
 
 
 @app.route("/comercial")

@@ -33,6 +33,10 @@
         <div class="card" style="margin-bottom:1rem;">
           <h2 class="card-title" style="margin-top:0;">Dados e filas</h2>
           <ul id="listInteg" style="margin:0;padding-left:1.25rem;"></ul>
+          <div class="filtro-row" style="margin-top:1rem;flex-wrap:wrap;align-items:center;gap:0.75rem;">
+            <button type="button" class="btn btn-primary" id="btnSyncTx" title="Chama a API Admin e actualiza applyfy_tx_facts (janela configurável)">Sincronizar transações (API → base local)</button>
+            <span class="text-muted" id="syncTxMsg" style="font-size:0.9rem;"></span>
+          </div>
         </div>
         <div class="card">
           <h2 class="card-title" style="margin-top:0;">Links</h2>
@@ -50,12 +54,7 @@
       if (warn) el.style.color = 'var(--danger, #c62828)';
       return el;
     }
-    Promise.all([
-      fetch('/api/health').then(function(r) { return r.json().then(function(j) { return { ok: r.ok, j: j }; }); }),
-      fetch('/api/integracao-status').then(function(r) { return r.json(); })
-    ]).then(function(pair) {
-      var h = pair[0];
-      var s = pair[1];
+    function fillIntegracaoLists(h, s) {
       document.getElementById('msgTop').textContent = '';
       var lh = document.getElementById('listHealth');
       lh.innerHTML = '';
@@ -65,14 +64,101 @@
       var liEl = document.getElementById('listInteg');
       liEl.innerHTML = '';
       liEl.appendChild(li('Último export (export_runs): ' + (s.last_export_run_at || '–')));
+      liEl.appendChild(li('Última actividade RPA (saldos / import vendas): ' + (s.last_rpa_at || '–')));
+      liEl.appendChild(li('Última sincronização transações (API → base local): ' + (s.last_api_tx_sync_at || '–')));
       liEl.appendChild(li('Último webhook recebido: ' + (s.last_webhook_received_at || '–')));
       liEl.appendChild(li('Export considerado atrasado (stale): ' + (s.export_stale ? 'sim' : 'não'), s.export_stale));
       liEl.appendChild(li('Silêncio de webhooks (limite): ' + (s.webhook_silent ? 'sim' : 'não'), s.webhook_silent));
       liEl.appendChild(li('Itens pendentes na DLQ: ' + (s.dlq_pending_count != null ? s.dlq_pending_count : '–'), (s.dlq_pending_count || 0) > 0));
       liEl.appendChild(li('Meta vendas líquidas (painel): ' + (s.meta_vendas_liquidas != null ? s.meta_vendas_liquidas : '–')));
       if (s.error) liEl.appendChild(li('Erro ao ler DB: ' + s.error, true));
-    }).catch(function() {
+    }
+    function loadIntegracaoStatus() {
+      return Promise.all([
+        fetch('/api/health').then(function(r) { return r.json().then(function(j) { return { ok: r.ok, j: j }; }); }),
+        fetch('/api/integracao-status').then(function(r) { return r.json(); })
+      ]).then(function(pair) {
+        fillIntegracaoLists(pair[0], pair[1]);
+        return pair;
+      });
+    }
+    loadIntegracaoStatus().catch(function() {
       document.getElementById('msgTop').textContent = 'Erro ao carregar status.';
+    });
+    function parseJsonResponse(r) {
+      return r.text().then(function(t) {
+        var j = null;
+        if (t && t.trim().charAt(0) === '{') {
+          try { j = JSON.parse(t); } catch (e) { j = null; }
+        }
+        if (!j) {
+          j = {
+            _parse_error: true,
+            _status: r.status,
+            _snippet: (t || '').replace(/\s+/g, ' ').trim().slice(0, 120),
+            error: r.status === 401 || r.status === 403
+              ? 'forbidden'
+              : 'invalid_response'
+          };
+        }
+        return { ok: r.ok, status: r.status, j: j };
+      });
+    }
+    document.getElementById('btnSyncTx').addEventListener('click', function() {
+      var btn = document.getElementById('btnSyncTx');
+      var msg = document.getElementById('syncTxMsg');
+      btn.disabled = true;
+      msg.textContent = 'A sincronizar…';
+      msg.style.color = '';
+      fetch('/api/internal/sync-transactions', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({ quick: true })
+      })
+        .then(parseJsonResponse)
+        .then(function(res) {
+          if (!res.ok || res.j._parse_error) {
+            if (res.j.error === 'forbidden' || res.status === 403) {
+              msg.textContent = 'Sem permissão (sessão Hub com Integrações ou token admin no servidor).';
+            } else if (res.status === 401 || (res.j._snippet && res.j._snippet.indexOf('login') >= 0)) {
+              msg.textContent = 'Sessão expirada ou não autenticado — actualize a página e volte a entrar.';
+            } else if (res.j._parse_error) {
+              msg.textContent = res.status >= 500
+                ? 'Erro no servidor ou proxy (HTTP ' + res.status + '). Ver logs do Gunicorn/Nginx.'
+                : ('Resposta não-JSON (HTTP ' + res.status + '). Confirme POST /api/internal/sync-transactions no mesmo domínio do painel.');
+            } else {
+              msg.textContent = res.j.error || ('Pedido falhou (HTTP ' + res.status + ').');
+            }
+            msg.style.color = 'var(--danger, #c62828)';
+            return;
+          }
+          if (res.j.ok === false) {
+            msg.textContent = res.j.error || 'Erro na sincronização.';
+            msg.style.color = 'var(--danger, #c62828)';
+            return;
+          }
+          var errs = res.j.errors && res.j.errors.length;
+          var extra = errs ? ' (' + errs + ' avisos por produtor)' : '';
+          var mode = res.j.sync_mode === 'quick' ? ' (sincronização rápida: primeiros ' + (res.j.producers != null ? res.j.producers : '?') + ' de ' + (res.j.producers_total != null ? res.j.producers_total : '?') + ' produtores)' : '';
+          if (res.j.sync_partial) {
+            extra += ' Ainda há produtores por sincronizar — use o cron horário ou aumente timeouts para sync completa.';
+          }
+          msg.textContent = 'Concluído. Factos actualizados: ' + (res.j.total_upserted != null ? res.j.total_upserted : '–') + '.' + mode + extra;
+          msg.style.color = '';
+          return loadIntegracaoStatus();
+        })
+        .catch(function(err) {
+          msg.textContent = 'Falha de rede ou timeout: ' + (err && err.message ? err.message : 'verifique ligação e certificado SSL.');
+          msg.style.color = 'var(--danger, #c62828)';
+        })
+        .finally(function() {
+          btn.disabled = false;
+        });
     });
   </script>
 </body>

@@ -12,6 +12,13 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/painel-theme.css">
+  <style>
+    .evo-lead { color: var(--zinc-400); font-size: 0.92rem; max-width: 48rem; margin: 0 0 1rem; line-height: 1.55; }
+    .table-wrap.flat .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .evo-api-row { background: rgba(59, 130, 246, 0.08); font-weight: 600; }
+    .evo-muted { color: var(--zinc-500); font-size: 0.8rem; }
+    .chart-container { height: min(420px, 55vh); position: relative; }
+  </style>
 </head>
 <body data-active="/evolucao">
   <div class="app-shell" id="app-shell">
@@ -27,8 +34,16 @@
         </div>
       </header>
       <main class="main-content">
-        <p class="text-muted" style="margin:0 0 1rem 0;">Os dados de evolução vêm do histórico no Postgres. As <strong>taxas do produtor</strong> vêm da API ApplyFy: <code>GET https://app.applyfy.com.br/api/v1/gateway/admin/producer/<span id="apiIdPlaceholder">{id}</span></code> — use o ID do produtor na URL.</p>
-        <div class="filtro" style="flex-direction:column;align-items:stretch;">
+        <p class="evo-lead">As colunas <strong>Pendente</strong>, <strong>Retido</strong>, <strong>Disponível</strong>, <strong>Total sacado</strong>, <strong>Total vendas (API)</strong> e <strong>Chargeback (API)</strong> seguem o mesmo modelo da página <strong>Saldo</strong> (<code>balances</code> / <code>totals</code> em <code>GET …/gateway/admin/producers</code>). Na tabela, cada <strong>data</strong> mostra o relatório guardado no Postgres (job de export). A linha <strong>Snapshot API (agora)</strong> traz os seis valores actuais da API. Use o <strong>período</strong> para filtrar as linhas históricas. No gráfico, <strong>Total vendas (API)</strong> e <strong>Chargeback (API)</strong> são calculados <strong>directamente na API Admin</strong> (<code>GET …/transactions</code> por produtor e datas), sem usar cópia local.</p>
+
+        <div class="filtro" style="flex-direction:column;align-items:stretch;gap:0.75rem;">
+          <div class="filtro-row" style="flex-wrap:wrap;">
+            <label for="evDateFrom">Período — de:</label>
+            <input type="date" id="evDateFrom" title="Filtra linhas do histórico (Postgres)">
+            <label for="evDateTo">até:</label>
+            <input type="date" id="evDateTo">
+            <button type="button" class="btn btn-primary" id="btnEvAplicarPeriodo">Aplicar período</button>
+          </div>
           <div class="filtro-row">
             <label for="busca">Filtrar por nome ou email:</label>
             <input type="text" id="busca" placeholder="Digite parte do nome ou email...">
@@ -40,47 +55,71 @@
             </select>
           </div>
           <div class="filtro-row">
-            <label for="coluna">Coluna a exibir no gráfico:</label>
+            <label for="coluna">Série no gráfico:</label>
             <select id="coluna">
-              <option value="saldo_disponivel">Saldo disponível</option>
-              <option value="saldo_pendente">Saldo pendente</option>
-              <option value="saldo_retido">Saldo retido</option>
-              <option value="total_sacado">Total sacado</option>
-              <option value="vendas_liquidas">Vendas líquidas</option>
-              <option value="indicacao">Indicação</option>
-              <option value="outros">Outros</option>
+              <option value="saldo_pendente">Pendente (histórico relatório)</option>
+              <option value="saldo_retido">Retido (histórico relatório)</option>
+              <option value="saldo_disponivel">Disponível (histórico relatório)</option>
+              <option value="total_sacado">Total sacado (histórico relatório)</option>
+              <option value="vendas_liquidas">Vendas líquidas (histórico relatório)</option>
+              <option value="api_sold">Total vendas (API) — soma diária (transações)</option>
+              <option value="api_chargeback">Chargeback (API) — soma diária (transações)</option>
             </select>
           </div>
           <p class="empty" id="msgProdutores" style="margin:0;"></p>
+          <p class="empty" id="msgEvolucao" style="margin:0;"></p>
         </div>
+
+        <div class="card card-padded" id="cardTable" style="display: none;">
+          <h2 class="content-h2">Tabela — relatório por data + snapshot API</h2>
+          <p class="evo-muted" style="margin:0 0 0.75rem;">Colunas API alinhadas a <code>balances.pending</code>, <code>fundLock</code>, <code>available</code>, <code>totals.withdrawn</code>, <code>totals.sold</code>, <code>totals.chargeback</code>.</p>
+          <div class="table-wrap flat" style="overflow-x:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th class="num">Pendente</th>
+                  <th class="num">Retido</th>
+                  <th class="num">Disponível</th>
+                  <th class="num">Total sacado</th>
+                  <th class="num">Total vendas (API)</th>
+                  <th class="num">Chargeback (API)</th>
+                </tr>
+              </thead>
+              <tbody id="evoTbody"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="card card-padded" id="cardChart" style="display: none;">
           <h2 class="content-h2" id="tituloChart">Evolução ao longo do tempo</h2>
           <div class="chart-container"><canvas id="chart"></canvas></div>
         </div>
-        <div class="card card-padded" id="cardTaxas" style="display: none;">
-          <h2 class="content-h2">Taxas do produtor (API ApplyFy)</h2>
-          <p class="text-muted" style="margin:0 0 0.75rem 0;">API: <code>GET /api/v1/gateway/admin/producer/<span id="apiIdExample">ID</span></code> — o painel chama <code>GET /api/produtor/<span id="apiIdExample2">ID</span>/taxas</code> (com <code>?refresh=1</code> para atualizar da ApplyFy).</p>
-          <div class="filtro-row" style="margin-bottom: 0.75rem;">
-            <label for="producerId">ID do produtor (obrigatório para buscar na API):</label>
-            <input type="text" id="producerId" placeholder="Ex.: oe2kuk5s2i (do webhook PRODUCER_CREATED ou painel ApplyFy)" style="min-width:200px;">
-            <button type="button" id="btnBuscarTaxas" class="btn btn-primary">Buscar taxas na API</button>
-          </div>
-          <p id="taxasMsg" class="empty" style="margin: 0; padding: 1rem 0;"></p>
-          <pre id="taxasJson" class="api-result" style="display: none; max-height: 280px;"></pre>
-          <p id="taxasFetchedAt" class="text-xs-muted" style="margin: 0.5rem 0 0 0;"></p>
-        </div>
-        <div class="empty" id="empty">Selecione um produtor para ver a evolução gráfica.</div>
+
+        <div class="empty" id="empty">Selecione um produtor para carregar dados.</div>
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js?v=6" defer></script>
+  <script src="/static/painel-shell.js?v=15" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     document.body.classList.add('loaded');
+    var API_BASE = typeof location !== 'undefined' ? location.origin : '';
     var chartInstance = null;
     var listaProdutores = [];
     var dadosEvolucaoAtuais = [];
-    var colunaLabels = { saldo_pendente: 'Saldo pendente', saldo_retido: 'Saldo retido', saldo_disponivel: 'Saldo disponível', total_sacado: 'Total sacado', vendas_liquidas: 'Vendas líquidas', indicacao: 'Indicação', outros: 'Outros' };
+    var apiSnapshotAtual = null;
+    var seriesDiarioAtual = null;
+    var seriesDiarioError = null;
+    var colunaLabels = {
+      saldo_pendente: 'Pendente (relatório)',
+      saldo_retido: 'Retido (relatório)',
+      saldo_disponivel: 'Disponível (relatório)',
+      total_sacado: 'Total sacado (relatório)',
+      vendas_liquidas: 'Vendas líquidas (relatório)',
+      api_sold: 'Total vendas (API)',
+      api_chargeback: 'Chargeback (API)'
+    };
     var chartTooltip = {
       backgroundColor: '#18181b',
       borderColor: '#3f3f46',
@@ -90,44 +129,126 @@
       bodyColor: '#e4e4e7',
       padding: 10
     };
+    function fmtBRL(n) {
+      if (n == null || n === '') return '–';
+      var x = Number(n);
+      if (isNaN(x)) return '–';
+      return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(x);
+    }
+    function esc(s) {
+      if (s == null || s === '') return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    }
+    function eachDayArray(fromStr, toStr) {
+      var out = [];
+      if (!fromStr || !toStr) return out;
+      var d0 = new Date(fromStr + 'T12:00:00');
+      var d1 = new Date(toStr + 'T12:00:00');
+      for (var d = new Date(d0); d <= d1; d.setDate(d.getDate() + 1)) {
+        out.push(d.toISOString().slice(0, 10));
+      }
+      return out;
+    }
+    function valueOnOrBefore(dados, key, dayStr) {
+      var bestVal = 0;
+      var bestRa = '';
+      for (var i = 0; i < dados.length; i++) {
+        var row = dados[i];
+        var ra = row.run_at || '';
+        var rd = ra.slice(0, 10);
+        if (!rd || rd > dayStr) continue;
+        if (ra > bestRa) {
+          bestRa = ra;
+          bestVal = row[key] != null ? Number(row[key]) : 0;
+        }
+      }
+      return bestVal;
+    }
+    function expandHistoricoDaily(dados, fromStr, toStr, colKey) {
+      var days = eachDayArray(fromStr, toStr);
+      if (!days.length) {
+        return {
+          labels: dados.map(function(d) { return d.run_at ? d.run_at.slice(0, 10) : ''; }),
+          values: dados.map(function(x) { return x[colKey] != null ? Number(x[colKey]) : 0; })
+        };
+      }
+      return {
+        labels: days,
+        values: days.map(function(ds) { return valueOnOrBefore(dados, colKey, ds); })
+      };
+    }
     function atualizarChart() {
       var dados = dadosEvolucaoAtuais;
-      if (!dados.length) return;
+      var df = document.getElementById('evDateFrom').value;
+      var dt = document.getElementById('evDateTo').value;
       var colKey = document.getElementById('coluna').value || 'saldo_disponivel';
-      var labels = dados.map(function(d) { return d.run_at ? d.run_at.slice(0, 10) : ''; });
-      var oneDataset = {
-        label: colunaLabels[colKey] || colKey,
-        data: dados.map(function(x) { return x[colKey] != null ? Number(x[colKey]) : 0; }),
-        borderColor: '#3b82f6',
-        backgroundColor: 'rgba(59, 130, 246, 0.12)',
-        fill: true,
-        tension: 0.2
-      };
+      var temSerieApi = seriesDiarioAtual && seriesDiarioAtual.length;
+      var periodoOk = !!(df && dt);
+      if (colKey.indexOf('api_') === 0) {
+        if (!temSerieApi && !apiSnapshotAtual) return;
+      } else {
+        if (!dados.length && !periodoOk) {
+          if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+          return;
+        }
+      }
+      var labels = [];
+      var dataVals = [];
+      var label = colunaLabels[colKey] || colKey;
+      if (colKey === 'api_sold') {
+        if (temSerieApi) {
+          labels = seriesDiarioAtual.map(function(d) { return d.date; });
+          dataVals = seriesDiarioAtual.map(function(d) { return Number(d.vendas_net) || 0; });
+        } else {
+          labels = dados.map(function(d) { return d.run_at ? d.run_at.slice(0, 10) : ''; });
+          if (!labels.length && apiSnapshotAtual) labels = [new Date().toISOString().slice(0, 10)];
+          var v = apiSnapshotAtual && apiSnapshotAtual.sold != null ? Number(apiSnapshotAtual.sold) : null;
+          dataVals = labels.map(function() { return v != null && !isNaN(v) ? v : 0; });
+        }
+      } else if (colKey === 'api_chargeback') {
+        if (temSerieApi) {
+          labels = seriesDiarioAtual.map(function(d) { return d.date; });
+          dataVals = seriesDiarioAtual.map(function(d) { return Number(d.chargeback) || 0; });
+        } else {
+          labels = dados.map(function(d) { return d.run_at ? d.run_at.slice(0, 10) : ''; });
+          if (!labels.length && apiSnapshotAtual) labels = [new Date().toISOString().slice(0, 10)];
+          var c = apiSnapshotAtual && apiSnapshotAtual.chargeback != null ? Number(apiSnapshotAtual.chargeback) : null;
+          dataVals = labels.map(function() { return c != null && !isNaN(c) ? c : 0; });
+        }
+      } else if (df && dt) {
+        var exp = expandHistoricoDaily(dados, df, dt, colKey);
+        labels = exp.labels;
+        dataVals = exp.values;
+      } else {
+        labels = dados.map(function(d) { return d.run_at ? d.run_at.slice(0, 10) : ''; });
+        dataVals = dados.map(function(x) { return x[colKey] != null ? Number(x[colKey]) : 0; });
+      }
       if (chartInstance) chartInstance.destroy();
       var ctx = document.getElementById('chart').getContext('2d');
       chartInstance = new Chart(ctx, {
         type: 'line',
-        data: { labels: labels, datasets: [oneDataset] },
+        data: {
+          labels: labels,
+          datasets: [{
+            label: label,
+            data: dataVals,
+            borderColor: colKey.indexOf('api_') === 0 ? '#a855f7' : '#3b82f6',
+            backgroundColor: colKey.indexOf('api_') === 0 ? 'rgba(168, 85, 247, 0.12)' : 'rgba(59, 130, 246, 0.12)',
+            fill: true,
+            tension: 0.2,
+            spanGaps: true
+          }]
+        },
         options: {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: {
-              position: 'top',
-              labels: { color: '#a1a1aa', font: { family: 'Inter, sans-serif' } }
-            },
+            legend: { position: 'top', labels: { color: '#a1a1aa', font: { family: 'Inter, sans-serif' } } },
             tooltip: chartTooltip
           },
           scales: {
-            y: {
-              beginAtZero: true,
-              grid: { color: 'rgba(255,255,255,0.06)' },
-              ticks: { color: '#a1a1aa' }
-            },
-            x: {
-              grid: { color: 'rgba(255,255,255,0.06)' },
-              ticks: { color: '#a1a1aa', maxRotation: 45 }
-            }
+            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#a1a1aa' } },
+            x: { grid: { color: 'rgba(255,255,255,0.06)' }, ticks: { color: '#a1a1aa', maxRotation: 45 } }
           }
         }
       });
@@ -141,12 +262,112 @@
         opt.style.display = show ? '' : 'none';
       });
     }
-    fetch('/api/produtores').then(function(r){ return r.json(); }).then(function(lista) {
+    function renderTabela() {
+      var tb = document.getElementById('evoTbody');
+      var dados = dadosEvolucaoAtuais;
+      var snap = apiSnapshotAtual;
+      var rows = [];
+      dados.forEach(function(d) {
+        var dt = d.run_at ? d.run_at.slice(0, 10) : '–';
+        rows.push(
+          '<tr><td>' + esc(dt) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(d.saldo_pendente)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(d.saldo_retido)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(d.saldo_disponivel)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(d.total_sacado)) + '</td>' +
+          '<td class="num evo-muted">—</td><td class="num evo-muted">—</td></tr>'
+        );
+      });
+      if (snap) {
+        rows.push(
+          '<tr class="evo-api-row"><td>Snapshot API (agora)</td>' +
+          '<td class="num">' + esc(fmtBRL(snap.pending)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(snap.fundLock)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(snap.available)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(snap.withdrawn)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(snap.sold)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(snap.chargeback)) + '</td></tr>'
+        );
+      } else if (dados.length || document.getElementById('produtor').value) {
+        rows.push(
+          '<tr class="evo-api-row"><td colspan="7" class="evo-muted">Snapshot API indisponível (verifique chaves APPLYFY_* ou correspondência de e-mail na listagem de produtores).</td></tr>'
+        );
+      }
+      tb.innerHTML = rows.join('') || '<tr><td colspan="7" class="empty">Sem linhas.</td></tr>';
+    }
+    function defaultPeriodIfEmpty() {
+      var to = document.getElementById('evDateTo');
+      var from = document.getElementById('evDateFrom');
+      if (!to.value && !from.value) {
+        var end = new Date();
+        var start = new Date();
+        start.setDate(start.getDate() - 30);
+        to.value = end.toISOString().slice(0, 10);
+        from.value = start.toISOString().slice(0, 10);
+      }
+    }
+    function buildEvolucaoUrl(email) {
+      var qs = new URLSearchParams();
+      qs.set('email', email);
+      var df = document.getElementById('evDateFrom').value;
+      var dt = document.getElementById('evDateTo').value;
+      if (df) qs.set('from', df);
+      if (dt) qs.set('to', dt);
+      return API_BASE + '/api/evolucao?' + qs.toString();
+    }
+    function carregarEvolucao() {
+      var email = document.getElementById('produtor').value;
+      var msg = document.getElementById('msgEvolucao');
+      if (!email) {
+        document.getElementById('cardTable').style.display = 'none';
+        document.getElementById('cardChart').style.display = 'none';
+        document.getElementById('empty').style.display = 'block';
+        dadosEvolucaoAtuais = [];
+        apiSnapshotAtual = null;
+        seriesDiarioAtual = null;
+        seriesDiarioError = null;
+        if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
+        return;
+      }
+      defaultPeriodIfEmpty();
+      msg.textContent = 'A carregar…';
+      fetch(buildEvolucaoUrl(email), { credentials: 'same-origin' })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+          if (res.error) {
+            msg.textContent = 'Erro: ' + res.error;
+            document.getElementById('cardTable').style.display = 'none';
+            document.getElementById('cardChart').style.display = 'none';
+            return;
+          }
+          dadosEvolucaoAtuais = res.dados || [];
+          apiSnapshotAtual = res.api_snapshot || null;
+          seriesDiarioAtual = res.series_diario || null;
+          seriesDiarioError = res.series_diario_error || null;
+          var extra = '';
+          if (seriesDiarioError) {
+            extra = ' Aviso (série diária API): ' + seriesDiarioError;
+          }
+          msg.textContent = extra ? extra.replace(/^\s+/, '') : '';
+          document.getElementById('empty').style.display = 'none';
+          document.getElementById('cardTable').style.display = 'block';
+          var mostrarChart = dadosEvolucaoAtuais.length || apiSnapshotAtual || (seriesDiarioAtual && seriesDiarioAtual.length);
+          document.getElementById('cardChart').style.display = mostrarChart ? 'block' : 'none';
+          document.getElementById('tituloChart').textContent = 'Evolução: ' + (dadosEvolucaoAtuais[0] && dadosEvolucaoAtuais[0].nome ? dadosEvolucaoAtuais[0].nome : email);
+          renderTabela();
+          atualizarChart();
+        })
+        .catch(function() {
+          msg.textContent = 'Erro ao carregar evolução.';
+          document.getElementById('cardChart').style.display = 'none';
+        });
+    }
+    fetch(API_BASE + '/api/produtores', { credentials: 'same-origin' }).then(function(r){ return r.json(); }).then(function(lista) {
       listaProdutores = lista || [];
       var sel = document.getElementById('produtor');
       var msgProd = document.getElementById('msgProdutores');
       if (!listaProdutores.length && msgProd) {
-        msgProd.textContent = 'Nenhum produtor no histórico. O histórico é salvo no Postgres quando DATABASE_URL está no .env e o job (run_daily.py) já rodou com sucesso.';
+        msgProd.textContent = 'Nenhum produtor no histórico. Configure DATABASE_URL e o job de export.';
       } else if (msgProd) msgProd.textContent = '';
       sel.innerHTML = '<option value="">Selecione um produtor</option>' + (listaProdutores.map(function(p) {
         var nome = (p.nome || p.email || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -155,115 +376,12 @@
       }).join(''));
       document.getElementById('busca').addEventListener('input', filtrarProdutores);
       document.getElementById('busca').addEventListener('keyup', filtrarProdutores);
-      document.getElementById('coluna').addEventListener('change', function() { if (dadosEvolucaoAtuais.length) atualizarChart(); });
+      document.getElementById('coluna').addEventListener('change', function() { atualizarChart(); });
+      document.getElementById('btnEvAplicarPeriodo').addEventListener('click', function() { carregarEvolucao(); });
       sel.addEventListener('change', function() {
-        var email = sel.value;
-        if (!email) {
-          document.getElementById('cardChart').style.display = 'none';
-          document.getElementById('cardTaxas').style.display = 'none';
-          document.getElementById('empty').style.display = 'block';
-          if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
-          return;
-        }
-        document.getElementById('cardTaxas').style.display = 'block';
-        document.getElementById('producerId').value = '';
-        carregarTaxasPorEmail(email);
-        fetch('/api/evolucao?email=' + encodeURIComponent(email))
-          .then(function(r){ return r.json(); })
-          .then(function(res) {
-            var dados = res.dados || [];
-            dadosEvolucaoAtuais = dados;
-            document.getElementById('empty').style.display = dados.length ? 'none' : 'block';
-            document.getElementById('tituloChart').textContent = 'Evolução: ' + (dados[0] && dados[0].nome ? dados[0].nome : email);
-            document.getElementById('cardChart').style.display = dados.length ? 'block' : 'none';
-            if (!dados.length) {
-              if (chartInstance) { chartInstance.destroy(); chartInstance = null; }
-              return;
-            }
-            atualizarChart();
-          })
-          .catch(function() {
-            document.getElementById('cardChart').style.display = 'none';
-            document.getElementById('empty').style.display = 'block';
-            document.getElementById('empty').textContent = 'Erro ao carregar evolução.';
-          });
+        carregarEvolucao();
       });
     }).catch(function() { document.getElementById('produtor').innerHTML = '<option value="">Erro ao carregar produtores</option>'; });
-
-    function carregarTaxasPorEmail(email) {
-      var msg = document.getElementById('taxasMsg');
-      var pre = document.getElementById('taxasJson');
-      var fetchedAt = document.getElementById('taxasFetchedAt');
-      msg.style.display = 'block';
-      msg.textContent = 'Carregando cache de taxas…';
-      pre.style.display = 'none';
-      fetchedAt.textContent = '';
-      fetch('/api/produtor/taxas?email=' + encodeURIComponent(email))
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.error) {
-            msg.textContent = data.error;
-            return;
-          }
-          if (!data.taxes_snapshot) {
-            msg.textContent = data.message || 'Nenhum cache de taxas para este email. Informe o ID do produtor e clique em "Buscar taxas na API" para buscar na ApplyFy.';
-            return;
-          }
-          msg.style.display = 'none';
-          pre.style.display = 'block';
-          pre.textContent = JSON.stringify(data.taxes_snapshot, null, 2);
-          fetchedAt.textContent = data.fetched_at ? 'Atualizado em: ' + data.fetched_at : '';
-        })
-        .catch(function() {
-          msg.textContent = 'Erro ao carregar taxas.';
-        });
-    }
-
-    function buscarTaxasPorId() {
-      var id = (document.getElementById('producerId').value || '').trim();
-      if (!id) {
-        document.getElementById('taxasMsg').textContent = 'Informe o ID do produtor.';
-        document.getElementById('taxasMsg').style.display = 'block';
-        return;
-      }
-      var msg = document.getElementById('taxasMsg');
-      var pre = document.getElementById('taxasJson');
-      var fetchedAt = document.getElementById('taxasFetchedAt');
-      msg.style.display = 'block';
-      msg.textContent = 'Buscando na API ApplyFy…';
-      pre.style.display = 'none';
-      fetchedAt.textContent = '';
-      fetch('/api/produtor/' + encodeURIComponent(id) + '/taxas?refresh=1')
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-          if (data.error) {
-            msg.textContent = data.error;
-            return;
-          }
-          if (!data.taxes_snapshot) {
-            msg.textContent = 'Nenhuma taxa retornada pela API.';
-            return;
-          }
-          msg.style.display = 'none';
-          pre.style.display = 'block';
-          pre.textContent = JSON.stringify(data.taxes_snapshot, null, 2);
-          fetchedAt.textContent = data.fetched_at ? 'Atualizado em: ' + data.fetched_at : '';
-        })
-        .catch(function() {
-          msg.textContent = 'Erro ao buscar taxas na API.';
-        });
-    }
-
-    document.getElementById('btnBuscarTaxas').addEventListener('click', buscarTaxasPorId);
-
-    document.getElementById('producerId').addEventListener('input', function() {
-      var id = (this.value || 'ID').trim() || 'ID';
-      var el1 = document.getElementById('apiIdExample');
-      var el2 = document.getElementById('apiIdExample2');
-      if (el1) el1.textContent = id;
-      if (el2) el2.textContent = id;
-    });
-
   </script>
 </body>
 </html>

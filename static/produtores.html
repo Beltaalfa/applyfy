@@ -6,12 +6,41 @@
   <meta name="theme-color" content="#000000">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <title>Produtores (webhook) | Applyfy</title>
+  <title>Consultar Produtores | Applyfy</title>
   <link rel="manifest" href="/static/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/painel-theme.css">
+  <style>
+    .consultar-lead { color: var(--zinc-400); font-size: 0.95rem; max-width: 48rem; margin: 0 0 1rem; line-height: 1.55; }
+    .consultar-lead code { font-size: 0.85em; }
+    .doc-hint { font-size: 0.8rem; color: var(--zinc-500); margin: 0 0 0.75rem; line-height: 1.45; }
+    .section-label { font-size: 0.7rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--zinc-500); margin: 0 0 0.35rem; }
+    .producer-detail-card { display: none; margin-top: 1.25rem; padding: 1rem 1.15rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--card); }
+    .producer-detail-card.visible { display: block; }
+    .producer-section { margin-top: 1rem; }
+    .producer-section:first-child { margin-top: 0; }
+    .producer-section h3 { margin: 0 0 0.5rem; font-size: 0.85rem; font-weight: 600; color: var(--zinc-400); text-transform: uppercase; letter-spacing: 0.04em; }
+    .producer-detail-dl { margin: 0; display: grid; gap: 0.5rem 1.25rem; grid-template-columns: auto 1fr; align-items: start; }
+    .producer-detail-dl dt { margin: 0; color: var(--zinc-500); font-size: 0.8rem; font-weight: 500; min-width: 8rem; }
+    .producer-detail-dl dd { margin: 0; color: var(--zinc-100); font-size: 0.9rem; word-break: break-word; }
+    .producer-detail-dl dd pre { margin: 0; font-size: 0.78rem; white-space: pre-wrap; }
+    .tag-chip { display: inline-block; padding: 0.15rem 0.45rem; border-radius: 4px; font-size: 0.75rem; margin: 0 0.25rem 0.25rem 0; }
+    .bank-table-wrap { overflow-x: auto; margin-top: 0.35rem; }
+    .bank-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .bank-table th, .bank-table td { border: 1px solid var(--border); padding: 0.35rem 0.5rem; text-align: left; }
+    .bank-table th { color: var(--zinc-500); font-weight: 500; }
+    .json-block { margin-top: 0.75rem; }
+    .json-block summary { cursor: pointer; color: var(--accent); font-size: 0.85rem; user-select: none; margin-bottom: 0.35rem; }
+    .json-block pre { margin: 0; max-height: 22rem; overflow: auto; }
+    .detail-actions { margin-top: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+    details.webhook-details { margin-top: 1.75rem; border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 0.75rem 1rem; background: rgba(24, 24, 27, 0.5); }
+    details.webhook-details summary { cursor: pointer; font-weight: 600; color: var(--zinc-400); list-style: none; }
+    details.webhook-details summary::-webkit-details-marker { display: none; }
+    .table-wrap.flat .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .gw-table-wrap { overflow-x: auto; }
+  </style>
 </head>
 <body data-active="/produtores">
   <div class="app-shell" id="app-shell">
@@ -23,45 +52,408 @@
     <div class="main-column">
       <header class="top-bar">
         <div class="top-bar-inner">
-          <h1 class="page-title">Produtores (webhook)</h1>
+          <h1 class="page-title">Consultar Produtores</h1>
         </div>
       </header>
       <main class="main-content">
-        <p id="msgTotal" class="empty" style="margin-top:0;">Lista de produtores que chegaram pelo webhook (PRODUCER_CREATED) ou pelo mapeamento offer code → produtor. Use <strong>Buscar na API</strong> para carregar os dados completos da ApplyFy (requer mesma conta do webhook).</p>
-        <div class="card">
+        <p class="consultar-lead">Conforme a API oficial Applyfy: <strong>GET</strong>
+          <code>https://app.applyfy.com.br/api/v1/gateway/admin/producers</code>.
+          Autenticação no servidor com <code>x-public-key</code> e <code>x-secret-key</code> (nunca expostas ao browser). O painel usa o proxy <code>/api/gateway/producers</code>.</p>
+        <p class="doc-hint">Query suportados: <code>page</code>, <code>pageSize</code> (5–50, padrão 20), <code>nameOrEmail</code>, <code>phone</code>, <code>status</code>, <code>kycStatus</code>, <code>bankDataStatus</code>, <code>minDocumentsSent</code>, <code>accountType</code>, <code>tags</code> (IDs separados por vírgula). Vários status aceitam valores separados por vírgula.</p>
+
+        <p class="section-label">Filtros</p>
+        <div class="filtro" id="gwProdFiltro1">
+          <label for="gwProdPageSize">pageSize</label>
+          <select id="gwProdPageSize" aria-label="pageSize">
+            <option value="5">5</option>
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+          </select>
+          <label for="gwProdBusca">nameOrEmail</label>
+          <input type="search" id="gwProdBusca" placeholder="Nome ou e-mail" autocomplete="off" style="min-width:11rem;">
+          <label for="gwProdPhone">phone</label>
+          <input type="text" id="gwProdPhone" placeholder="Telefone" autocomplete="off" style="min-width:9rem;">
+          <button type="button" class="btn btn-primary" id="btnGwProdCarregar">Consultar</button>
+          <button type="button" class="btn btn-secondary" id="btnGwProdPrev">Página anterior</button>
+          <button type="button" class="btn btn-secondary" id="btnGwProdNext">Página seguinte</button>
+        </div>
+        <div class="filtro" id="gwProdFiltro2">
+          <label for="gwProdStatus">status</label>
+          <input type="text" id="gwProdStatus" placeholder="ex: ACTIVE" style="min-width:8rem;">
+          <label for="gwProdKyc">kycStatus</label>
+          <input type="text" id="gwProdKyc" placeholder="ex: approved" style="min-width:8rem;">
+          <label for="gwProdBank">bankDataStatus</label>
+          <input type="text" id="gwProdBank" placeholder="ex: approved" style="min-width:8rem;">
+          <label for="gwProdMinDoc">minDocumentsSent</label>
+          <input type="number" id="gwProdMinDoc" placeholder="mín." min="0" step="1" style="width:5rem;">
+          <label for="gwProdAccType">accountType</label>
+          <input type="text" id="gwProdAccType" placeholder="master, sub…" style="min-width:7rem;">
+          <label for="gwProdTags">tags</label>
+          <input type="text" id="gwProdTags" placeholder="IDs separados por vírgula" style="min-width:12rem;">
+        </div>
+        <p id="msgGwProd" class="text-muted" style="margin:0.35rem 0 0.75rem;">A carregar…</p>
+        <div class="card gw-table-wrap">
           <div class="table-wrap flat">
             <table>
               <thead>
                 <tr>
-                  <th>ID produtor</th>
-                  <th>Nome</th>
-                  <th>Offer codes</th>
-                  <th>Ações</th>
+                  <th>id</th>
+                  <th>displayName</th>
+                  <th>email</th>
+                  <th>phone</th>
+                  <th>status</th>
+                  <th class="num">documentsCount</th>
+                  <th class="num">clientCount</th>
+                  <th class="num">transactionsCount</th>
+                  <th>kycStatus</th>
+                  <th>bankDataStatus</th>
+                  <th>tags</th>
+                  <th></th>
                 </tr>
               </thead>
-              <tbody id="tbody"><tr><td colspan="4" class="empty">Carregando…</td></tr></tbody>
+              <tbody id="gwProdTbody">
+                <tr><td colspan="12" class="empty">A carregar…</td></tr>
+              </tbody>
             </table>
           </div>
         </div>
-        <div id="apiResultBox" style="display:none;">
-          <h3 class="content-h2" style="margin-top:1.5rem;">Resposta da API ApplyFy</h3>
-          <pre id="apiResult" class="api-result"></pre>
+
+        <div id="producerDetailCard" class="producer-detail-card" aria-live="polite">
+          <h2 class="content-h2" style="margin:0 0 0.5rem;font-size:1rem;">Item <code id="detailItemId">—</code> (resposta 200 — campos <code>data.items[]</code>)</h2>
+          <div id="producerDetailInner"></div>
+          <div class="detail-actions">
+            <button type="button" class="btn btn-secondary" id="btnDetailRefetch" style="display:none;">Recarregar via GET /producer/:id</button>
+          </div>
+          <details class="json-block" id="apiJsonDetails">
+            <summary>JSON do item (como na API)</summary>
+            <pre id="apiResult" class="api-result"></pre>
+          </details>
         </div>
+
+        <details class="webhook-details">
+          <summary>Registos locais (webhook / exportação)</summary>
+          <p id="msgTotal" class="empty" style="margin-top:0.75rem;">Lista local (fora do endpoint <code>…/producers</code>).</p>
+          <div class="card" style="margin-top:0.75rem;">
+            <div class="table-wrap flat">
+              <table>
+                <thead>
+                  <tr>
+                    <th>ID produtor</th>
+                    <th>Nome</th>
+                    <th>Offer codes</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody"><tr><td colspan="4" class="empty">Carregando…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </details>
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js?v=6" defer></script>
+  <script src="/static/painel-shell.js?v=10" defer></script>
   <script>
+    function gwEsc(s) {
+      if (s == null || s === '') return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    }
+    var GW_LAST_ITEMS = [];
+    var GW_LAST_PAG = {};
+    var GW_DETAIL_ID = '';
+
+    function fmtBRL(n) {
+      if (n == null || n === '') return '–';
+      var x = Number(n);
+      if (isNaN(x)) return gwEsc(n);
+      return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(x);
+    }
+
+    function summarizeTaxes(t) {
+      if (t == null) return '';
+      try {
+        return JSON.stringify(t, null, 2);
+      } catch (e) {
+        return String(t);
+      }
+    }
+
+    function renderTagsHtml(tags) {
+      if (!tags || !tags.length) return '<span class="text-muted">—</span>';
+      return tags.map(function(t) {
+        var name = gwEsc(t.name || t.id || '');
+        var col = (t.color && /^#[0-9A-Fa-f]{3,8}$/.test(t.color)) ? t.color : 'var(--zinc-700)';
+        return '<span class="tag-chip" style="background:' + col + '22;border:1px solid ' + col + ';color:var(--zinc-100);">' + name + '</span>';
+      }).join(' ');
+    }
+
+    function renderBankAccountsTable(accs) {
+      if (!accs || !accs.length) return '<p class="text-muted">Nenhuma conta.</p>';
+      var th = '<tr><th>name</th><th>status</th><th>ownerName</th><th>pix / tipo</th><th>banco</th><th>agência</th><th>conta</th><th>accountType</th></tr>';
+      var rows = accs.map(function(a) {
+        return '<tr><td>' + gwEsc(a.name) + '</td><td>' + gwEsc(a.status) + '</td><td>' + gwEsc(a.ownerName) + '</td><td>' + gwEsc(a.pix) + (a.pixType ? ' <small>(' + gwEsc(a.pixType) + ')</small>' : '') + '</td><td>' + gwEsc(a.bank) + '</td><td>' + gwEsc([a.agency, a.agencyDigit].filter(Boolean).join('-')) + '</td><td>' + gwEsc([a.account, a.accountDigit].filter(Boolean).join('-')) + '</td><td>' + gwEsc(a.accountType) + '</td></tr>';
+      }).join('');
+      return '<div class="bank-table-wrap"><table class="bank-table">' + th + rows + '</table></div>';
+    }
+
+    function renderProducerDetailData(data) {
+      var inner = document.getElementById('producerDetailInner');
+      var rows = [];
+      function add(label, val, rawPre) {
+        if (val == null || val === '') return;
+        var cell = rawPre ? '<pre>' + gwEsc(summarizeTaxes(val)) + '</pre>' : gwEsc(String(val));
+        rows.push('<dt>' + gwEsc(label) + '</dt><dd>' + cell + '</dd>');
+      }
+      add('id', data.id);
+      add('name', data.name);
+      add('displayName', data.displayName);
+      add('email', data.email);
+      add('phone', data.phone);
+      add('status', data.status);
+      add('documentsCount', data.documentsCount != null ? data.documentsCount : '');
+      add('clientCount', data.clientCount != null ? data.clientCount : '');
+      add('transactionsCount', data.transactionsCount != null ? data.transactionsCount : '');
+      add('kycStatus', data.kycStatus);
+      add('bankDataStatus', data.bankDataStatus);
+
+      var html = '';
+      if (rows.length) {
+        html += '<div class="producer-section"><h3>Identificação e estado</h3><dl class="producer-detail-dl">' + rows.join('') + '</dl></div>';
+      }
+      if (data.balances && typeof data.balances === 'object') {
+        html += '<div class="producer-section"><h3>balances</h3><dl class="producer-detail-dl">';
+        html += '<dt>pending</dt><dd>' + gwEsc(fmtBRL(data.balances.pending)) + '</dd>';
+        html += '<dt>fundLock</dt><dd>' + gwEsc(fmtBRL(data.balances.fundLock)) + '</dd>';
+        html += '<dt>available</dt><dd>' + gwEsc(fmtBRL(data.balances.available)) + '</dd>';
+        html += '</dl></div>';
+      }
+      if (data.totals && typeof data.totals === 'object') {
+        html += '<div class="producer-section"><h3>totals</h3><dl class="producer-detail-dl">';
+        html += '<dt>withdrawn</dt><dd>' + gwEsc(fmtBRL(data.totals.withdrawn)) + '</dd>';
+        html += '<dt>sold</dt><dd>' + gwEsc(fmtBRL(data.totals.sold)) + '</dd>';
+        html += '<dt>chargeback</dt><dd>' + gwEsc(fmtBRL(data.totals.chargeback)) + '</dd>';
+        html += '</dl></div>';
+      }
+      if (data.tags && data.tags.length) {
+        html += '<div class="producer-section"><h3>tags</h3><div>' + renderTagsHtml(data.tags) + '</div></div>';
+      }
+      html += '<div class="producer-section"><h3>bankAccounts</h3>' + renderBankAccountsTable(data.bankAccounts) + '</div>';
+      if (data.taxes != null) {
+        html += '<div class="producer-section"><h3>taxes</h3><pre style="margin:0;font-size:0.78rem;white-space:pre-wrap;">' + gwEsc(summarizeTaxes(data.taxes)) + '</pre></div>';
+      }
+      inner.innerHTML = html || '<p class="text-muted">Sem dados estruturados.</p>';
+      document.getElementById('producerDetailCard').classList.add('visible');
+    }
+
+    function showProducerFromList(index) {
+      var data = GW_LAST_ITEMS[index];
+      if (!data) return;
+      GW_DETAIL_ID = data.id || '';
+      document.getElementById('detailItemId').textContent = GW_DETAIL_ID || '—';
+      document.getElementById('apiResult').textContent = JSON.stringify(data, null, 2);
+      document.getElementById('apiResult').classList.remove('error');
+      document.getElementById('apiJsonDetails').open = false;
+      renderProducerDetailData(data);
+      var ref = document.getElementById('btnDetailRefetch');
+      if (GW_DETAIL_ID) {
+        ref.style.display = 'inline-block';
+        ref.onclick = function() {
+          fetchProducerResponse('/api/produtor/' + encodeURIComponent(GW_DETAIL_ID) + '/detalhes?includeTaxes=true&includeKyc=true&includePayoutAccount=true&includeDocuments=true');
+        };
+      } else {
+        ref.style.display = 'none';
+      }
+      document.getElementById('producerDetailCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function extractProducerData(parsed) {
+      if (!parsed || typeof parsed !== 'object') return null;
+      if (parsed.success !== false && parsed.data && typeof parsed.data === 'object') return parsed.data;
+      if (parsed.id != null || parsed.email) return parsed;
+      return null;
+    }
+
+    function fetchProducerResponse(url, done) {
+      var pre = document.getElementById('apiResult');
+      var details = document.getElementById('apiJsonDetails');
+      pre.textContent = 'A carregar…';
+      pre.classList.remove('error');
+      document.getElementById('producerDetailInner').innerHTML = '';
+      document.getElementById('detailItemId').textContent = 'GET detalhe';
+      document.getElementById('producerDetailCard').classList.add('visible');
+      details.open = true;
+      fetch(url, { credentials: 'same-origin' }).then(function(r) {
+        return r.text().then(function(t) {
+          var j = null;
+          try { j = t ? JSON.parse(t) : null; } catch (e) { j = null; }
+          return { ok: r.ok, j: j, t: t };
+        });
+      }).then(function(o) {
+        if (o.j === null) {
+          pre.textContent = (o.t || '').slice(0, 4000);
+          pre.classList.add('error');
+          document.getElementById('producerDetailInner').innerHTML = '<p class="text-muted">Resposta não-JSON (ver proxy / timeouts).</p>';
+        } else {
+          pre.textContent = JSON.stringify(o.j, null, 2);
+          if (!o.ok || (o.j && o.j.error)) pre.classList.add('error');
+          else pre.classList.remove('error');
+          var d = extractProducerData(o.j);
+          if (d) renderProducerDetailData(d);
+          else document.getElementById('producerDetailInner').innerHTML = '<p class="text-muted">Sem <code>data</code> — veja o JSON.</p>';
+        }
+        document.getElementById('producerDetailCard').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }).catch(function(e) {
+        pre.textContent = 'Erro: ' + (e.message || '');
+        pre.classList.add('error');
+      }).finally(function() {
+        if (typeof done === 'function') done();
+      });
+    }
+
+    function buildProducersQuery() {
+      var params = new URLSearchParams();
+      params.set('page', String(gwProdPage));
+      params.set('pageSize', String(parseInt(document.getElementById('gwProdPageSize').value, 10) || 20));
+      function addStr(id, key) {
+        var v = document.getElementById(id).value.trim();
+        if (v) params.set(key, v);
+      }
+      addStr('gwProdBusca', 'nameOrEmail');
+      addStr('gwProdPhone', 'phone');
+      addStr('gwProdStatus', 'status');
+      addStr('gwProdKyc', 'kycStatus');
+      addStr('gwProdBank', 'bankDataStatus');
+      addStr('gwProdAccType', 'accountType');
+      addStr('gwProdTags', 'tags');
+      var md = document.getElementById('gwProdMinDoc').value.trim();
+      if (md !== '') {
+        var n = parseInt(md, 10);
+        if (!isNaN(n)) params.set('minDocumentsSent', String(n));
+      }
+      return params;
+    }
+
+    /** URL absoluta com path /api/gateway/producers e query — evita erros de concatenação (404 HTML). */
+    function gatewayProducersListUrl() {
+      var u = new URL('/api/gateway/producers', window.location.origin);
+      buildProducersQuery().forEach(function (value, key) {
+        u.searchParams.set(key, value);
+      });
+      return u.toString();
+    }
+
+    function formatGatewayError(status, bodyText) {
+      var t = (bodyText || '').trim();
+      if (/^<!doctype/i.test(t) || /^<html/i.test(t)) {
+        if (status === 404) {
+          return 'HTTP 404: o backend não tem esta rota (código antigo ou serviço não reiniciado). Abra no browser /api/gateway/ping — se também for 404, no servidor: actualize /var/www/applyfy e sudo systemctl restart applyfy-painel. Ver docs/API_GATEWAY.md. Limpe cache (Ctrl+Shift+R).';
+        }
+        return 'HTTP ' + status + ': resposta HTML em vez de JSON (proxy ou rota incorrecta).';
+      }
+      var j = null;
+      try {
+        j = t ? JSON.parse(t) : null;
+      } catch (e) {
+        j = null;
+      }
+      if (j && j.error && j.error.message) return String(j.error.message);
+      if (j && j.message) return String(j.message);
+      return t.slice(0, 400) || ('HTTP ' + status);
+    }
+
+    var gwProdPage = 1;
+
+    function setNextPrevState() {
+      var pag = GW_LAST_PAG || {};
+      var tp = pag.totalPages != null ? Number(pag.totalPages) : null;
+      var prev = document.getElementById('btnGwProdPrev');
+      var next = document.getElementById('btnGwProdNext');
+      prev.disabled = gwProdPage <= 1;
+      next.disabled = tp != null && tp > 0 && gwProdPage >= tp;
+    }
+
+    function loadProdutoresGateway() {
+      var msg = document.getElementById('msgGwProd');
+      var tbody = document.getElementById('gwProdTbody');
+      msg.textContent = 'A carregar…';
+      GW_LAST_ITEMS = [];
+      GW_LAST_PAG = {};
+      var listUrl = gatewayProducersListUrl();
+      fetch(listUrl, { credentials: 'same-origin' })
+        .then(function(r) { return r.text().then(function(t) { return { ok: r.ok, status: r.status, t: t }; }); })
+        .then(function(o) {
+          var data = null;
+          try { data = o.t ? JSON.parse(o.t) : null; } catch (e) { data = null; }
+          if (!o.ok) {
+            var err = formatGatewayError(o.status, o.t);
+            msg.textContent = 'Erro: ' + err;
+            tbody.innerHTML = '<tr><td colspan="12" class="empty">Falha na consulta. Pedido: <code style="font-size:0.8em;">' + gwEsc(listUrl) + '</code>. Verifique sessão, permissão ao ecrã <strong>Consultar produtores</strong>, chaves <code>APPLYFY_*</code> no servidor e deploy.</td></tr>';
+            setNextPrevState();
+            return;
+          }
+          if (!data || data.success === false) {
+            msg.textContent = (data && data.error && data.error.message) ? String(data.error.message) : 'success=false ou resposta inválida.';
+            tbody.innerHTML = '<tr><td colspan="12" class="empty">Resposta inválida.</td></tr>';
+            setNextPrevState();
+            return;
+          }
+          var d = data.data || {};
+          var pag = d.pagination || {};
+          GW_LAST_PAG = pag;
+          var items = d.items || [];
+          GW_LAST_ITEMS = items;
+          msg.textContent =
+            'pagination: page=' + (pag.page != null ? pag.page : '—') +
+            ', pageSize=' + (pag.pageSize != null ? pag.pageSize : '—') +
+            ', totalPages=' + (pag.totalPages != null ? pag.totalPages : '—') +
+            ', count=' + (pag.count != null ? pag.count : '—') +
+            ', take=' + (pag.take != null ? pag.take : '—') +
+            ', skip=' + (pag.skip != null ? pag.skip : '—');
+          if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="12" class="empty">Nenhum produtor (items vazio). Ajuste filtros ou página.</td></tr>';
+            setNextPrevState();
+            return;
+          }
+          tbody.innerHTML = items.map(function(p, idx) {
+            var id = String(p.id || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+            var idShort = id.length > 14 ? id.slice(0, 12) + '…' : id;
+            var nome = gwEsc(p.displayName || p.name || '–');
+            var em = gwEsc(p.email || '–');
+            var tel = gwEsc(p.phone || '–');
+            var st = gwEsc(p.status || '–');
+            var dc = p.documentsCount != null ? String(p.documentsCount) : '–';
+            var cc = p.clientCount != null ? String(p.clientCount) : '–';
+            var tc = p.transactionsCount != null ? String(p.transactionsCount) : '–';
+            var kyc = gwEsc(p.kycStatus || '–');
+            var bds = gwEsc(p.bankDataStatus || '–');
+            var tagsCell = renderTagsHtml(p.tags);
+            return '<tr><td title="' + gwEsc(id) + '"><code>' + gwEsc(idShort) + '</code></td><td>' + nome + '</td><td><code style="font-size:0.8em;">' + em + '</code></td><td>' + tel + '</td><td>' + st + '</td><td class="num">' + gwEsc(dc) + '</td><td class="num">' + gwEsc(cc) + '</td><td class="num">' + gwEsc(tc) + '</td><td>' + kyc + '</td><td>' + bds + '</td><td style="max-width:10rem;">' + tagsCell + '</td><td><button type="button" class="btn btn-secondary btn-det" data-i="' + idx + '">Ver detalhe</button></td></tr>';
+          }).join('');
+          tbody.querySelectorAll('.btn-det').forEach(function(b) {
+            b.addEventListener('click', function() {
+              var i = parseInt(this.getAttribute('data-i'), 10);
+              if (!isNaN(i)) showProducerFromList(i);
+            });
+          });
+          setNextPrevState();
+        })
+        .catch(function(e) {
+          msg.textContent = 'Erro de rede: ' + (e.message || '');
+          setNextPrevState();
+        });
+    }
+
     function loadProdutores() {
       var tbody = document.getElementById('tbody');
       tbody.innerHTML = '<tr><td colspan="4" class="empty">Carregando…</td></tr>';
       fetch('/api/produtores-webhook?limit=500').then(function(r) { return r.json(); }).then(function(data) {
         var list = data.produtores || [];
-        document.getElementById('msgTotal').textContent = 'Total: ' + (data.total || list.length) + ' produtores. Clique em "Buscar na API" para ver os dados completos (nome, email, taxas, etc.) da ApplyFy. Se aparecer 403, webhook e API precisam usar a mesma conta ApplyFy.';
+        document.getElementById('msgTotal').textContent = 'Total local: ' + (data.total || list.length) + '. «Buscar na API» chama outro endpoint (detalhe por ID).';
         document.getElementById('msgTotal').classList.remove('empty');
         document.getElementById('msgTotal').classList.add('text-muted');
         if (!list.length) {
-          tbody.innerHTML = '<tr><td colspan="4" class="empty">Nenhum produtor ainda. Rode a exportação de saldos (cron/run_daily) com sucesso ou configure o webhook ApplyFy para receber PRODUCER_CREATED. Os produtores do histórico de exportação também aparecem aqui.</td></tr>';
+          tbody.innerHTML = '<tr><td colspan="4" class="empty">Nenhum registo local.</td></tr>';
           return;
         }
         tbody.innerHTML = list.map(function(p) {
@@ -70,7 +462,7 @@
           var codes = (p.offer_codes || []).length ? p.offer_codes.join(', ') : '–';
           var isEmail = id.indexOf('@') !== -1;
           var btn = isEmail
-            ? '<span class="text-muted" title="Produtor do histórico de exportação; Buscar na API usa ID numérico">–</span>'
+            ? '<span class="text-muted" title="ID não numérico">–</span>'
             : '<button type="button" class="btn-api" data-id="' + id + '">Buscar na API</button>';
           return '<tr><td><code>' + id + '</code></td><td>' + name + '</td><td>' + codes + '</td><td>' + btn + '</td></tr>';
         }).join('');
@@ -78,41 +470,33 @@
           btn.addEventListener('click', function() {
             var id = this.getAttribute('data-id');
             if (!id) return;
-            var box = document.getElementById('apiResultBox');
-            var pre = document.getElementById('apiResult');
-            this.classList.add('loading');
-            this.textContent = 'Buscando…';
-            fetch('/api/produtor/' + encodeURIComponent(id) + '/detalhes').then(function(r) {
-              return r.text().then(function(text) {
-                var json = null;
-                try { json = text ? JSON.parse(text) : {}; } catch (e) { json = null; }
-                return { ok: r.ok, json: json, text: text };
-              });
-            }).then(function(o) {
-              var pre = document.getElementById('apiResult');
-              if (o.json === null) {
-                pre.textContent = 'O servidor retornou uma página em vez de JSON (possível 404 ou 502).\n\n• 502 Bad Gateway: o proxy (Cloudflare/servidor) não recebeu resposta a tempo do backend. Reinicie o serviço da aplicação (gunicorn/uwsgi) e confira os logs. Se a API ApplyFy estiver lenta, o timeout foi reduzido para 10s (APPLYFY_API_TIMEOUT no .env).\n\n• 404: a rota /api/produtor/ID/detalhes pode não existir neste ambiente — faça o deploy e reinicie o servidor.\n\nResposta (início):\n' + (o.text || '').slice(0, 600);
-                pre.classList.add('error');
-              } else {
-                pre.textContent = JSON.stringify(o.json, null, 2);
-                if (!o.ok || o.json.error) { pre.classList.add('error'); } else { pre.classList.remove('error'); }
-              }
-              box.style.display = 'block';
-              pre.scrollIntoView({ behavior: 'smooth' });
-            }).catch(function(e) {
-              pre.textContent = 'Erro: ' + (e.message || 'falha ao buscar');
-              pre.classList.add('error');
-              box.style.display = 'block';
-            }).finally(function() {
-              btn.classList.remove('loading');
-              btn.textContent = 'Buscar na API';
+            var self = this;
+            self.classList.add('loading');
+            self.textContent = 'Buscando…';
+            fetchProducerResponse('/api/produtor/' + encodeURIComponent(id) + '/detalhes', function() {
+              self.classList.remove('loading');
+              self.textContent = 'Buscar na API';
             });
           });
         });
       }).catch(function(e) {
-        document.getElementById('tbody').innerHTML = '<tr><td colspan="4" class="empty">Erro: ' + (e.message || 'falha ao carregar') + '</td></tr>';
+        document.getElementById('tbody').innerHTML = '<tr><td colspan="4" class="empty">Erro: ' + gwEsc(e.message || 'falha') + '</td></tr>';
       });
     }
+
+    document.getElementById('btnGwProdCarregar').addEventListener('click', function() { gwProdPage = 1; loadProdutoresGateway(); });
+    document.getElementById('btnGwProdPrev').addEventListener('click', function() { if (gwProdPage > 1) { gwProdPage--; loadProdutoresGateway(); } });
+    document.getElementById('btnGwProdNext').addEventListener('click', function() {
+      var tp = GW_LAST_PAG.totalPages != null ? Number(GW_LAST_PAG.totalPages) : null;
+      if (tp != null && gwProdPage >= tp) return;
+      gwProdPage++;
+      loadProdutoresGateway();
+    });
+    document.getElementById('gwProdBusca').addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') { e.preventDefault(); gwProdPage = 1; loadProdutoresGateway(); }
+    });
+
+    loadProdutoresGateway();
     loadProdutores();
   </script>
 </body>

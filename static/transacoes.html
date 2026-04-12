@@ -12,6 +12,47 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/painel-theme.css">
+  <style>
+    .tx-intro { margin: 0 0 1.25rem; max-width: 40rem; }
+    .tx-intro-lead { margin: 0; font-size: 0.9375rem; color: var(--zinc-300); line-height: 1.55; }
+    .tx-help { margin: 0 0 1.25rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: rgba(24, 24, 27, 0.45); overflow: hidden; }
+    .tx-help summary { cursor: pointer; padding: 0.65rem 1rem; font-size: 0.8125rem; font-weight: 500; color: var(--zinc-300); list-style: none; display: flex; align-items: center; gap: 0.5rem; }
+    .tx-help summary::-webkit-details-marker { display: none; }
+    .tx-help summary::before { content: ""; width: 0.35rem; height: 0.35rem; border-right: 2px solid var(--zinc-500); border-bottom: 2px solid var(--zinc-500); transform: rotate(-45deg); transition: transform 0.15s ease; flex-shrink: 0; }
+    .tx-help[open] summary::before { transform: rotate(45deg); margin-top: -0.15rem; }
+    .tx-help-body { padding: 0 1rem 1rem; font-size: 0.8125rem; color: var(--zinc-400); line-height: 1.6; border-top: 1px solid rgba(39, 39, 42, 0.8); }
+    .tx-help-body code { font-size: 0.78em; }
+    .tx-filter-card { margin-bottom: 0.75rem; }
+    .tx-filter-body { padding: 1rem 1.25rem 1.25rem; }
+    .tx-field-group { margin: 0 0 1.35rem; }
+    .tx-field-group:last-of-type { margin-bottom: 0; }
+    .tx-field-legend { margin: 0 0 0.65rem; font-size: 0.6875rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--zinc-500); }
+    .tx-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: 0.75rem 1rem; align-items: end; }
+    .tx-field { display: flex; flex-direction: column; gap: 0.3rem; min-width: 0; }
+    .tx-field label { font-size: 0.75rem; font-weight: 500; color: var(--zinc-400); }
+    .tx-field input,
+    .tx-field select { width: 100%; min-width: 0; }
+    .tx-field input[type="datetime-local"] { padding: 0.45rem 0.65rem; border-radius: var(--radius); border: 1px solid var(--zinc-700); background: rgba(24, 24, 27, 0.5); color: var(--zinc-100); font-family: inherit; font-size: 0.8125rem; }
+    .tx-field input[type="datetime-local"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35); }
+    .tx-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--zinc-800); }
+    .tx-actions-gap { flex: 1; min-width: 0.5rem; }
+    #msgGateway.tx-status { min-height: 1.35rem; margin: 0.5rem 0 0.75rem; font-size: 0.875rem; color: var(--zinc-400); }
+    .gw-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .table-wrap.flat .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .gw-tx-table th { font-size: 0.68rem; line-height: 1.25; white-space: normal; max-width: 12rem; vertical-align: bottom; word-break: break-word; }
+    .gw-tx-table td { font-size: 0.72rem; line-height: 1.35; vertical-align: top; }
+    .gw-tx-table td.gw-cell-data { max-width: 18rem; min-width: 5rem; word-break: break-word; white-space: pre-wrap; }
+    .gw-tx-table th.gw-sticky-col,
+    .gw-tx-table td.gw-sticky-col { position: sticky; left: 0; z-index: 2; background: var(--zinc-900); box-shadow: 4px 0 12px -4px rgba(0, 0, 0, 0.55); }
+    .gw-tx-table thead th { z-index: 3; background: rgba(39, 39, 42, 0.95); }
+    .gw-tx-table td.gw-json-cell { max-width: none; white-space: normal; z-index: 2; }
+    .modal-json-pre { max-height: 70vh; overflow: auto; font-size: 0.78rem; margin: 0; white-space: pre-wrap; word-break: break-word; font-family: ui-monospace, monospace; }
+    @media (max-width: 640px) {
+      .tx-actions { flex-direction: column; align-items: stretch; }
+      .tx-actions .btn { width: 100%; justify-content: center; }
+      .tx-actions-gap { display: none; }
+    }
+  </style>
 </head>
 <body data-active="/transacoes">
   <div class="app-shell" id="app-shell">
@@ -23,216 +64,511 @@
     <div class="main-column">
       <header class="top-bar">
         <div class="top-bar-inner">
-          <h1 class="page-title">Transações (webhook)</h1>
+          <h1 class="page-title">Transações</h1>
         </div>
       </header>
-      <main class="main-content">
-        <div class="filtro">
-          <label for="dateFrom">De:</label>
-          <input type="date" id="dateFrom">
-          <label for="dateTo">Até:</label>
-          <input type="date" id="dateTo">
-          <label for="event">Evento:</label>
-          <select id="event">
-            <option value="">Todos</option>
-            <option value="TRANSACTION_CREATED">TRANSACTION_CREATED</option>
-            <option value="TRANSACTION_PAID">TRANSACTION_PAID</option>
-            <option value="TRANSACTION_CANCELED">TRANSACTION_CANCELED</option>
-            <option value="TRANSACTION_REFUNDED">TRANSACTION_REFUNDED</option>
-            <option value="PRODUCER_CREATED">PRODUCER_CREATED</option>
-          </select>
-          <label for="offerCode">Offer code:</label>
-          <input type="text" id="offerCode" placeholder="Filtrar por offer code">
-          <button type="button" class="btn btn-primary" id="btnFiltro">Buscar</button>
-          <button type="button" class="btn btn-secondary" id="btnSyncOffer" title="Busca na API ApplyFy o offer code de cada produtor (PRODUCER_CREATED) e preenche ID/Nome do produtor nas transações.">Sincronizar produtores</button>
+      <main class="main-content wide">
+        <div class="tx-intro">
+          <p class="tx-intro-lead">Lista paginada via proxy <code>GET /api/gateway/transactions</code> (API Admin ApplyFy). Cada coluna mostra um <strong>nome legível em português</strong>; passe o rato no cabeçalho para ver o caminho técnico da API. Deslize horizontalmente se houver muitos campos.</p>
         </div>
-        <p id="msgSync" class="text-muted" style="margin:0 0 0.5rem 0;"></p>
-        <p class="empty" id="msgTransacoes" style="margin-bottom:1rem;"></p>
-        <div class="card">
+
+        <details class="tx-help">
+          <summary>Parâmetros da API e autenticação no servidor</summary>
+          <div class="tx-help-body">
+            <p style="margin:0 0 0.75rem;">O painel encaminha para <code>…/gateway/admin/transactions</code> com as chaves configuradas no servidor (<code>APPLYFY_PUBLIC_KEY</code> / <code>APPLYFY_SECRET_KEY</code>).</p>
+            <p style="margin:0;">Query suportada (camelCase): <code>page</code>, <code>pageSize</code> (5–50), <code>transactionId</code>, <code>orderOrTransactionId</code>, <code>acquirerExternalId</code>, <code>clientEmail</code>, <code>clientDocument</code>, <code>producerEmail</code>, <code>paymentMethod</code>, <code>acquirer</code>, <code>status</code>, <code>subStatus</code>, <code>period</code>, <code>start</code>, <code>end</code>.</p>
+          </div>
+        </details>
+
+        <section class="card tx-filter-card" aria-labelledby="tx-filters-heading">
+          <div class="card-header" id="tx-filters-heading">Filtros</div>
+          <div class="tx-filter-body">
+            <div class="tx-field-group">
+              <div class="tx-field-legend">Paginação e período</div>
+              <div class="tx-fields">
+                <div class="tx-field">
+                  <label for="gwPageSize">Itens por página</label>
+                  <select id="gwPageSize">
+                    <option value="5">5</option>
+                    <option value="10">10</option>
+                    <option value="20" selected>20</option>
+                    <option value="30">30</option>
+                    <option value="40">40</option>
+                    <option value="50">50</option>
+                  </select>
+                </div>
+                <div class="tx-field">
+                  <label for="gwPeriod">Período (period)</label>
+                  <select id="gwPeriod">
+                    <option value="total" selected>total</option>
+                    <option value="today">today</option>
+                    <option value="week">week</option>
+                    <option value="month">month</option>
+                  </select>
+                </div>
+                <div class="tx-field">
+                  <label for="gwStart">Início (start)</label>
+                  <input type="datetime-local" id="gwStart" title="Intervalo enviado à API">
+                </div>
+                <div class="tx-field">
+                  <label for="gwEnd">Fim (end)</label>
+                  <input type="datetime-local" id="gwEnd">
+                </div>
+              </div>
+            </div>
+            <div class="tx-field-group">
+              <div class="tx-field-legend">Estado do pagamento</div>
+              <div class="tx-fields">
+                <div class="tx-field">
+                  <label for="gwStatus">Status</label>
+                  <input type="text" id="gwStatus" placeholder="ex. PAID" autocomplete="off">
+                </div>
+                <div class="tx-field">
+                  <label for="gwSubStatus">Substatus</label>
+                  <input type="text" id="gwSubStatus" placeholder="Opcional" autocomplete="off">
+                </div>
+                <div class="tx-field">
+                  <label for="gwPayment">Método</label>
+                  <select id="gwPayment">
+                    <option value="">Qualquer</option>
+                    <option value="PIX">PIX</option>
+                    <option value="BOLETO">BOLETO</option>
+                    <option value="CREDIT_CARD">CREDIT_CARD</option>
+                    <option value="CRYPTO">CRYPTO</option>
+                  </select>
+                </div>
+                <div class="tx-field">
+                  <label for="gwAcquirer">Adquirente</label>
+                  <input type="text" id="gwAcquirer" placeholder="acquirer" autocomplete="off">
+                </div>
+              </div>
+            </div>
+            <div class="tx-field-group">
+              <div class="tx-field-legend">Identificadores</div>
+              <div class="tx-fields">
+                <div class="tx-field">
+                  <label for="gwTransactionId">ID da transação</label>
+                  <input type="text" id="gwTransactionId" placeholder="transactionId" autocomplete="off">
+                </div>
+                <div class="tx-field">
+                  <label for="gwOrderOrTransactionId">Pedido / ref.</label>
+                  <input type="text" id="gwOrderOrTransactionId" placeholder="orderOrTransactionId" autocomplete="off">
+                </div>
+                <div class="tx-field">
+                  <label for="gwAcquirerExternalId">ID externo (adq.)</label>
+                  <input type="text" id="gwAcquirerExternalId" placeholder="acquirerExternalId" autocomplete="off">
+                </div>
+              </div>
+            </div>
+            <div class="tx-field-group">
+              <div class="tx-field-legend">Produtor e cliente</div>
+              <div class="tx-fields">
+                <div class="tx-field">
+                  <label for="gwProducerEmail">E-mail do produtor</label>
+                  <input type="email" id="gwProducerEmail" placeholder="producerEmail" autocomplete="off">
+                </div>
+                <div class="tx-field">
+                  <label for="gwClientEmail">E-mail do cliente</label>
+                  <input type="email" id="gwClientEmail" placeholder="clientEmail" autocomplete="off">
+                </div>
+                <div class="tx-field">
+                  <label for="gwClientDocument">Documento do cliente</label>
+                  <input type="text" id="gwClientDocument" placeholder="CPF / CNPJ" autocomplete="off">
+                </div>
+              </div>
+            </div>
+            <div class="tx-actions">
+              <button type="button" class="btn btn-primary" id="btnGwBuscar">Carregar</button>
+              <button type="button" class="btn btn-secondary" id="btnGwPrev">Página anterior</button>
+              <button type="button" class="btn btn-secondary" id="btnGwNext">Página seguinte</button>
+              <button type="button" class="btn btn-secondary" id="btnGwLimpar">Limpar filtros</button>
+              <span class="tx-actions-gap" aria-hidden="true"></span>
+            </div>
+          </div>
+        </section>
+
+        <p id="msgGateway" class="tx-status" role="status" aria-live="polite"></p>
+
+        <section class="card gw-wrap" aria-labelledby="tx-results-heading">
+          <div class="card-header" id="tx-results-heading">Resultados</div>
           <div class="table-wrap flat">
-            <table>
-              <thead id="thead">
-                <tr><th>Carregando…</th></tr>
+            <table class="gw-tx-table">
+              <thead id="gwThead">
+                <tr>
+                  <th class="gw-sticky-col" scope="col" title="Abrir o registro completo em JSON">Ação</th>
+                  <th scope="col">Carregue os dados para ver as colunas com nomes legíveis (o caminho técnico fica no tooltip).</th>
+                </tr>
               </thead>
-              <tbody id="tbody"><tr><td class="empty">Configure o webhook e busque aqui.</td></tr></tbody>
+              <tbody id="gwTbody">
+                <tr><td colspan="2" class="empty">Clique em «Carregar» para consultar a API.</td></tr>
+              </tbody>
             </table>
           </div>
-        </div>
-        <div id="modalSyncResult" class="modal-overlay" style="display: none;" aria-hidden="true">
-          <div class="modal-box" role="dialog" aria-labelledby="modalSyncTitle">
+        </section>
+
+        <div id="modalGwJson" class="modal-overlay" style="display: none;" aria-hidden="true">
+          <div class="modal-box" role="dialog" aria-labelledby="modalGwJsonTitle" style="max-width: min(52rem, 96vw);">
             <div class="modal-header">
-              <h2 id="modalSyncTitle">Resultado da sincronização</h2>
-              <button type="button" class="modal-close" id="modalSyncClose" aria-label="Fechar">&times;</button>
+              <h2 id="modalGwJsonTitle">Item da API (JSON completo)</h2>
+              <button type="button" class="modal-close" id="modalGwJsonClose" aria-label="Fechar">&times;</button>
             </div>
             <div class="modal-body">
-              <p id="modalSyncSummary" class="modal-summary"></p>
-              <ul id="modalSyncErrors" class="modal-errors"></ul>
+              <pre id="modalGwJsonBody" class="modal-json-pre"></pre>
             </div>
             <div class="modal-footer">
-              <button type="button" class="btn btn-primary" id="modalSyncOk">OK</button>
+              <button type="button" class="btn btn-primary" id="modalGwJsonOk">OK</button>
             </div>
           </div>
         </div>
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js?v=6" defer></script>
+  <script src="/static/painel-shell.js?v=12" defer></script>
   <script>
-    function buildUrl() {
-      var from = document.getElementById('dateFrom').value;
-      var to = document.getElementById('dateTo').value;
-      var event = document.getElementById('event').value;
-      var offer = document.getElementById('offerCode').value.trim();
-      var params = new URLSearchParams();
-      if (from) params.set('date_from', from);
-      if (to) params.set('date_to', to);
-      if (event) params.set('event', event);
-      if (offer) params.set('offer_code', offer);
-      params.set('limit', '500');
-      return '/api/transacoes?' + params.toString();
+    var API_BASE = typeof location !== 'undefined' ? location.origin : '';
+    var gwPage = 1;
+    window._gwItems = [];
+    window._gwLastKeyCount = 0;
+    function gwEsc(s) {
+      if (s == null || s === '') return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
     }
-    var columnLabels = {
-      received_at: 'Data',
-      event: 'Evento',
-      token: 'Token',
-      offer_code: 'Offer code',
-      producer_id: 'ID produtor',
-      producer_name: 'Produtor',
-      producer_email: 'Email produtor',
-      producer_phone: 'Tel. produtor',
-      producer_document: 'Doc. produtor',
-      producer_status: 'Status produtor',
-      producer_created_at: 'Produtor criado em',
-      transaction_id: 'ID transação',
-      transaction_status: 'Status transação',
-      payment_method: 'Método pagamento',
-      original_currency: 'Moeda origem',
-      original_amount: 'Valor origem',
-      currency: 'Moeda',
-      amount: 'Valor',
-      exchange_rate: 'Câmbio',
+    /** Achata qualquer valor JSON: objetos viram a.b.c; arrays viram nome[0].x; vazios viram {} / []. */
+    function gwFlattenJson(val, prefix, out) {
+      out = out || {};
+      if (val === null) {
+        if (prefix) out[prefix] = 'null';
+        return out;
+      }
+      if (val === undefined) return out;
+      if (typeof val !== 'object') {
+        if (prefix) out[prefix] = val;
+        return out;
+      }
+      if (Array.isArray(val)) {
+        if (val.length === 0) {
+          if (prefix) out[prefix] = '[]';
+          return out;
+        }
+        for (var i = 0; i < val.length; i++) {
+          var p = (prefix ? prefix + '[' : '[') + i + ']';
+          var el = val[i];
+          if (el !== null && typeof el === 'object') {
+            gwFlattenJson(el, p, out);
+          } else {
+            out[p] = el === null ? 'null' : el;
+          }
+        }
+        return out;
+      }
+      var keys = Object.keys(val);
+      if (keys.length === 0) {
+        if (prefix) out[prefix] = '{}';
+        return out;
+      }
+      for (var j = 0; j < keys.length; j++) {
+        var k = keys[j];
+        var path = prefix ? prefix + '.' + k : k;
+        var v = val[k];
+        if (v !== null && typeof v === 'object') {
+          gwFlattenJson(v, path, out);
+        } else {
+          out[path] = v === null ? 'null' : v;
+        }
+      }
+      return out;
+    }
+    function gwFmtCell(v) {
+      if (v === undefined) return '–';
+      if (v === null) return 'null';
+      if (typeof v === 'boolean') return v ? 'true' : 'false';
+      if (typeof v === 'number') return String(v);
+      return String(v);
+    }
+    /** Nomes amigáveis por segmento (camelCase da API). */
+    var GW_LABEL_SEG = {
+      id: 'ID',
+      transactionId: 'ID da transação',
+      orderId: 'ID do pedido',
+      orderOrTransactionId: 'ID pedido / transação',
+      acquirerExternalId: 'ID externo (adquirente)',
+      paymentMethod: 'Método de pagamento',
+      subStatus: 'Substatus',
+      status: 'Status',
+      acquirer: 'Adquirente',
+      producer: 'Produtor',
+      client: 'Cliente',
+      buyer: 'Comprador',
+      financial: 'Financeiro',
+      order: 'Pedido',
+      feeTransactions: 'Taxas e encargos',
+      transactionAttempts: 'Tentativas de cobrança',
+      items: 'Itens',
+      product: 'Produto',
+      offer: 'Oferta',
+      offerCode: 'Código da oferta',
+      createdAt: 'Criado em',
+      updatedAt: 'Atualizado em',
+      payedAt: 'Pago em',
+      paidAt: 'Pago em',
+      availableAt: 'Disponível em',
+      date: 'Data',
+      email: 'E-mail',
+      name: 'Nome',
+      document: 'Documento',
+      phone: 'Telefone',
       installments: 'Parcelas',
-      transaction_create_at: 'Transação criada em',
-      transaction_payed_at: 'Transação paga em',
-      pix_end_to_end_id: 'PIX endToEndId',
-      client_id: 'ID cliente',
-      client_name: 'Cliente nome',
-      client_email: 'Cliente email',
-      client_phone: 'Cliente tel',
-      client_cpf: 'CPF',
-      client_cnpj: 'CNPJ',
-      client_address: 'Endereço cliente',
-      subscription_id: 'ID assinatura',
-      order_items_summary: 'Itens (resumo)',
-      utm_source: 'UTM source',
-      utm_medium: 'UTM medium',
-      utm_campaign: 'UTM campaign',
-      utm_content: 'UTM content',
-      utm_term: 'UTM term',
-      track_ip: 'IP',
-      track_country: 'País',
-      track_user_agent: 'User-Agent',
-      track_zip_code: 'CEP',
-      track_city: 'Cidade',
-      track_state: 'Estado'
+      chargeAmount: 'Valor cobrado',
+      netSaleAmount: 'Valor líquido (venda)',
+      grossAmount: 'Valor bruto',
+      amount: 'Valor',
+      clientPaidAmount: 'Valor pago pelo cliente',
+      netAmount: 'Valor líquido',
+      currency: 'Moeda',
+      totalAmount: 'Valor total',
+      exchangeRate: 'Câmbio',
+      quantity: 'Quantidade',
+      price: 'Preço',
+      address: 'Endereço',
+      city: 'Cidade',
+      state: 'Estado / UF',
+      zipCode: 'CEP',
+      country: 'País',
+      subscription: 'Assinatura',
+      type: 'Tipo',
+      code: 'Código',
+      description: 'Descrição',
+      refund: 'Estorno',
+      metadata: 'Metadados',
+      shipping: 'Frete',
+      taxId: 'Documento fiscal',
+      cpf: 'CPF',
+      cnpj: 'CNPJ',
+      responseTimeMs: 'Tempo de resposta (ms)',
+      fee: 'Taxa',
+      fundLock: 'Reserva / retenção',
+      producerCommission: 'Comissão do produtor',
+      acquirerFee: 'Taxa do adquirente',
+      operationFee: 'Taxa de operação',
+      endToEndId: 'PIX end-to-end',
+      boleto: 'Boleto',
+      pix: 'PIX',
+      card: 'Cartão',
+      creditCard: 'Cartão de crédito',
+      crypto: 'Crypto',
+      track: 'Rastreamento',
+      utm: 'UTM',
+      utmSource: 'UTM origem',
+      utmMedium: 'UTM meio',
+      utmCampaign: 'UTM campanha',
+      utmContent: 'UTM conteúdo',
+      utmTerm: 'UTM termo',
+      userAgent: 'User-Agent',
+      ip: 'IP',
+      line: 'Linha digitável',
+      barcode: 'Código de barras',
+      responseCode: 'Código de resposta',
+      responseMessage: 'Mensagem de resposta',
+      authorizationCode: 'Código de autorização',
+      nsu: 'NSU',
+      tid: 'TID',
+      brand: 'Bandeira',
+      lastDigits: 'Final do cartão',
+      holderName: 'Nome no cartão',
+      expiration: 'Validade',
+      acquirerName: 'Nome do adquirente',
+      split: 'Split',
+      recipient: 'Recebedor',
+      balance: 'Saldo',
+      payout: 'Repasse',
+      bankAccount: 'Conta bancária',
+      kyc: 'KYC',
+      taxes: 'Taxas (cadastro)',
+      webhook: 'Webhook',
+      payload: 'Payload',
+      error: 'Erro',
+      message: 'Mensagem',
+      success: 'Sucesso',
+      data: 'Dados',
+      pagination: 'Paginação',
+      page: 'Página',
+      pageSize: 'Tamanho da página',
+      totalPages: 'Total de páginas',
+      count: 'Contagem',
+      itemsCount: 'Qtd. de itens'
     };
-    function fmtDateLocal(val) {
-      if (val == null || val === '') return '–';
-      var s = String(val).trim().replace(' ', 'T');
-      if (!s) return '–';
-      if (s.length >= 19 && s[s.length - 1] !== 'Z' && !/[+-]\d{2}:?\d{2}$/.test(s)) s += 'Z';
-      var d = new Date(s);
-      if (isNaN(d.getTime())) return String(val);
-      return d.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium', hour12: false });
+    function gwHumanizeSegment(key) {
+      if (!key) return '';
+      var h = String(key).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/([A-Z])([A-Z][a-z])/g, '$1 $2').replace(/_/g, ' ').trim();
+      if (!h) return key;
+      return h.charAt(0).toUpperCase() + h.slice(1);
     }
-    function fmtVal(val, key) {
-      if (val == null || val === '') return '–';
-      if (key === 'amount' || key === 'original_amount') return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(val));
-      if (key === 'received_at' || key === 'transaction_create_at' || key === 'transaction_payed_at' || key === 'producer_created_at') return fmtDateLocal(val);
-      if (key === 'payment_method') return String(val).replace(/_/g, ' ');
-      return String(val);
+    /** Um segmento pode ser `feeTransactions[0]` ou `amount`. */
+    function gwLabelOneSegment(seg) {
+      var m = /^([^\[\]]+)\[(\d+)\]$/.exec(seg);
+      if (m) {
+        var base = GW_LABEL_SEG[m[1]] || gwHumanizeSegment(m[1]);
+        var n = parseInt(m[2], 10) + 1;
+        return base + ' (#' + n + ')';
+      }
+      return GW_LABEL_SEG[seg] || gwHumanizeSegment(seg);
     }
-    function loadTransacoes() {
-      var msg = document.getElementById('msgTransacoes');
-      msg.textContent = 'Carregando…';
-      fetch(buildUrl()).then(function(r) { return r.json(); }).then(function(data) {
-        msg.textContent = data.total !== undefined ? 'Total: ' + data.total + ' transações' : '';
-        var list = data.transacoes || [];
-        var columns = data.columns && data.columns.length ? data.columns : Object.keys(columnLabels);
-        var thead = document.getElementById('thead');
-        var tbody = document.getElementById('tbody');
-        var colCount = columns.length;
-        thead.innerHTML = '<tr>' + columns.map(function(col) {
-          var label = columnLabels[col] || col;
-          var cls = (col === 'amount' || col === 'original_amount') ? ' class="num"' : '';
-          return '<th' + cls + '>' + label + '</th>';
-        }).join('') + '</tr>';
-        if (!list.length) {
-          tbody.innerHTML = '<tr><td colspan="' + colCount + '" class="empty">Nenhuma transação encontrada. Configure o webhook no painel ApplyFy (URL: ' + location.origin + '/api/webhooks/applyfy).</td></tr>';
-          return;
-        }
-        tbody.innerHTML = list.map(function(t) {
-          return '<tr>' + columns.map(function(col) {
-            var val = fmtVal(t[col], col);
-            var cls = (col === 'amount' || col === 'original_amount') ? ' class="num"' : '';
-            return '<td' + cls + ' title="' + (val !== '–' ? String(val).replace(/&/g,'&amp;').replace(/"/g, '&quot;').replace(/</g,'&lt;') : '') + '">' + (val.length > 100 ? val.slice(0, 100) + '…' : val) + '</td>';
-          }).join('') + '</tr>';
-        }).join('');
-      }).catch(function(e) {
-        document.getElementById('msgTransacoes').textContent = 'Erro: ' + (e.message || 'falha ao carregar');
-        document.getElementById('tbody').innerHTML = '<tr><td class="empty">Erro ao carregar transações.</td></tr>';
+    /** Caminho técnico → rótulo em português (níveis separados por ›). */
+    function gwColumnLabel(path) {
+      if (!path) return '';
+      return path.split('.').map(function(s) { return gwLabelOneSegment(s); }).join(' › ');
+    }
+    function gwColspanMsg() {
+      return Math.max(2, 1 + (window._gwLastKeyCount || 1));
+    }
+    function gwBuildTransactionParams() {
+      var params = new URLSearchParams();
+      params.set('page', String(gwPage));
+      var ps = parseInt(document.getElementById('gwPageSize').value, 10) || 20;
+      params.set('pageSize', String(ps));
+      function add(id, key) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        var v = (el.value || '').trim();
+        if (v) params.set(key, v);
+      }
+      add('gwTransactionId', 'transactionId');
+      add('gwOrderOrTransactionId', 'orderOrTransactionId');
+      add('gwAcquirerExternalId', 'acquirerExternalId');
+      add('gwClientEmail', 'clientEmail');
+      add('gwClientDocument', 'clientDocument');
+      add('gwProducerEmail', 'producerEmail');
+      add('gwStatus', 'status');
+      add('gwSubStatus', 'subStatus');
+      add('gwAcquirer', 'acquirer');
+      var pm = document.getElementById('gwPayment').value;
+      if (pm) params.set('paymentMethod', pm);
+      var per = document.getElementById('gwPeriod').value;
+      if (per && per !== 'total') params.set('period', per);
+      var st = document.getElementById('gwStart');
+      var en = document.getElementById('gwEnd');
+      if (st && st.value) {
+        var isoS = st.value.length === 16 ? st.value + ':00' : st.value;
+        params.set('start', isoS);
+      }
+      if (en && en.value) {
+        var isoE = en.value.length === 16 ? en.value + ':00' : en.value;
+        params.set('end', isoE);
+      }
+      return params;
+    }
+    function gwClearFilters() {
+      gwPage = 1;
+      ['gwTransactionId', 'gwOrderOrTransactionId', 'gwAcquirerExternalId', 'gwProducerEmail', 'gwClientEmail', 'gwClientDocument', 'gwStatus', 'gwSubStatus', 'gwAcquirer', 'gwStart', 'gwEnd'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.value = '';
       });
+      document.getElementById('gwPeriod').value = 'total';
+      document.getElementById('gwPayment').value = '';
+      document.getElementById('gwPageSize').value = '20';
     }
-    document.getElementById('btnFiltro').addEventListener('click', loadTransacoes);
-    document.getElementById('btnSyncOffer').addEventListener('click', function() {
-      var msg = document.getElementById('msgSync');
-      msg.textContent = 'Sincronizando…';
-      msg.style.color = '';
-      fetch('/api/transacoes/sync-offer-producers').then(function(r) { return r.json(); }).then(function(data) {
-        if (data.error) {
-          msg.textContent = 'Erro: ' + data.error;
-          msg.style.color = '#f87171';
-          return;
-        }
-        var saved = data.saved_mappings || 0;
-        var errors = data.errors || [];
-        msg.textContent = saved > 0 ? 'Mapeamentos salvos: ' + saved + (errors.length ? '. Houve erros — veja o resultado abaixo.' : '.') : (errors.length ? 'Nenhum mapeamento salvo. Veja os erros abaixo.' : 'Concluído.');
-        if (errors.length) msg.style.color = '#fbbf24';
-
-        var modal = document.getElementById('modalSyncResult');
-        var summaryEl = document.getElementById('modalSyncSummary');
-        var listEl = document.getElementById('modalSyncErrors');
-        summaryEl.textContent = 'Mapeamentos salvos: ' + saved + (errors.length ? '. Erros: ' + errors.length + '.' : '.');
-        summaryEl.className = 'modal-summary' + (errors.length ? ' has-errors' : ' success');
-        listEl.innerHTML = '';
-        if (errors.length) {
-          errors.forEach(function(e) {
-            var li = document.createElement('li');
-            var id = (e.producer_id || '').toString().replace(/</g, '&lt;').replace(/"/g, '&quot;');
-            var err = (e.error || '').toString().replace(/</g, '&lt;').replace(/"/g, '&quot;');
-            li.innerHTML = '<code>' + id + '</code> ' + err;
-            listEl.appendChild(li);
-          });
-        }
-        modal.style.display = 'flex';
-        modal.setAttribute('aria-hidden', 'false');
-        loadTransacoes();
-      }).catch(function(e) {
-        msg.textContent = 'Erro: ' + (e.message || 'falha');
-        msg.style.color = '#f87171';
-      });
-    });
-    function closeSyncModal() {
-      var modal = document.getElementById('modalSyncResult');
+    function gwShowJson(idx) {
+      var it = window._gwItems[idx];
+      if (!it) return;
+      document.getElementById('modalGwJsonBody').textContent = JSON.stringify(it, null, 2);
+      var modal = document.getElementById('modalGwJson');
+      modal.style.display = 'flex';
+      modal.setAttribute('aria-hidden', 'false');
+    }
+    function closeGwJsonModal() {
+      var modal = document.getElementById('modalGwJson');
       modal.style.display = 'none';
       modal.setAttribute('aria-hidden', 'true');
     }
-    document.getElementById('modalSyncClose').addEventListener('click', closeSyncModal);
-    document.getElementById('modalSyncOk').addEventListener('click', closeSyncModal);
-    document.getElementById('modalSyncResult').addEventListener('click', function(e) {
-      if (e.target === this) closeSyncModal();
+    document.getElementById('modalGwJsonClose').addEventListener('click', closeGwJsonModal);
+    document.getElementById('modalGwJsonOk').addEventListener('click', closeGwJsonModal);
+    document.getElementById('modalGwJson').addEventListener('click', function(e) {
+      if (e.target === this) closeGwJsonModal();
     });
-    loadTransacoes();
+    function loadGatewayTransactions() {
+      var msg = document.getElementById('msgGateway');
+      var tbody = document.getElementById('gwTbody');
+      var thead = document.getElementById('gwThead');
+      msg.textContent = 'A carregar…';
+      var params = gwBuildTransactionParams();
+      var url = API_BASE + '/api/gateway/transactions?' + params.toString();
+      fetch(url, { credentials: 'same-origin' })
+        .then(function(r) { return r.text().then(function(t) { return { ok: r.ok, status: r.status, t: t }; }); })
+        .then(function(o) {
+          var raw = o.t || '';
+          var cs = gwColspanMsg();
+          if (raw.trim().charAt(0) === '<') {
+            msg.textContent = 'Resposta não é JSON (provável 404 HTML do proxy). Verifique /api/gateway/ping e o deploy.';
+            tbody.innerHTML = '<tr><td colspan="' + cs + '" class="empty">Resposta HTML em vez de JSON.</td></tr>';
+            return;
+          }
+          var data = null;
+          try { data = raw ? JSON.parse(raw) : null; } catch (e) { data = null; }
+          if (!o.ok) {
+            var err = (data && data.error && data.error.message) || (data && data.message) || raw || ('HTTP ' + o.status);
+            msg.textContent = 'Erro: ' + err;
+            tbody.innerHTML = '<tr><td colspan="' + cs + '" class="empty">' + gwEsc(String(err).slice(0, 280)) + '</td></tr>';
+            return;
+          }
+          if (!data || data.success === false) {
+            msg.textContent = 'Resposta inválida da API.';
+            tbody.innerHTML = '<tr><td colspan="' + cs + '" class="empty">Resposta inválida.</td></tr>';
+            return;
+          }
+          var d = data.data || {};
+          var pag = d.pagination || {};
+          var items = d.items || [];
+          window._gwItems = items;
+          var totalP = pag.totalPages != null ? pag.totalPages : '?';
+          var cnt = pag.count != null ? pag.count : '?';
+          var tsize = pag.pageSize != null ? pag.pageSize : '';
+          if (!items.length) {
+            window._gwLastKeyCount = 0;
+            thead.innerHTML = '<tr><th class="gw-sticky-col" scope="col">Ação</th><th scope="col">Sem colunas — nenhum item nesta página</th></tr>';
+            tbody.innerHTML = '<tr><td colspan="2" class="empty">Nenhum resultado nesta página.</td></tr>';
+            msg.textContent = 'Página ' + (pag.page || gwPage) + ' de ' + totalP + ' — 0 itens' + (cnt !== '?' ? ' — total (API): ' + cnt : '') + (tsize !== '' ? ' — pageSize: ' + tsize : '');
+            return;
+          }
+          var flatRows = items.map(function(it) { return gwFlattenJson(it, '', {}); });
+          var keySet = {};
+          flatRows.forEach(function(row) {
+            Object.keys(row).forEach(function(k) { keySet[k] = true; });
+          });
+          var allKeys = Object.keys(keySet).sort(function(a, b) { return a.localeCompare(b, 'pt-BR'); });
+          window._gwLastKeyCount = allKeys.length;
+          msg.textContent = 'Página ' + (pag.page || gwPage) + ' de ' + totalP + ' — ' + items.length + ' linha(s)' + (cnt !== '?' ? ' — total (API): ' + cnt : '') + (tsize !== '' ? ' — pageSize: ' + tsize : '') + ' — ' + allKeys.length + ' coluna(s) de campos (JSON achatado)';
+          thead.innerHTML = '<tr><th class="gw-sticky-col" scope="col" title="Abrir o registro completo em JSON">Ação</th>' + allKeys.map(function(k) {
+            return '<th scope="col" title="Campo API: ' + gwEsc(k) + '">' + gwEsc(gwColumnLabel(k)) + '</th>';
+          }).join('') + '</tr>';
+          tbody.innerHTML = items.map(function(it, ix) {
+            var flat = flatRows[ix];
+            var btn = '<td class="gw-sticky-col gw-json-cell"><button type="button" class="btn btn-secondary" style="padding:0.2rem 0.5rem;font-size:0.75rem;" data-gw-ix="' + ix + '">Ver JSON</button></td>';
+            var cells = allKeys.map(function(key) {
+              var v = flat[key];
+              var text = gwFmtCell(v);
+              var isNum = typeof v === 'number' && !isNaN(v);
+              var cls = 'gw-cell-data' + (isNum ? ' num' : '');
+              var title = text.length > 1800 ? text.slice(0, 1800) + '…' : text;
+              return '<td class="' + cls + '" title="' + gwEsc(title) + '">' + gwEsc(text) + '</td>';
+            }).join('');
+            return '<tr>' + btn + cells + '</tr>';
+          }).join('');
+          tbody.querySelectorAll('[data-gw-ix]').forEach(function(btn) {
+            btn.addEventListener('click', function() {
+              var i = parseInt(btn.getAttribute('data-gw-ix'), 10);
+              gwShowJson(i);
+            });
+          });
+        })
+        .catch(function(e) {
+          document.getElementById('msgGateway').textContent = 'Erro de rede: ' + (e.message || '');
+          document.getElementById('gwTbody').innerHTML = '<tr><td colspan="' + gwColspanMsg() + '" class="empty">Falha ao carregar.</td></tr>';
+        });
+    }
+    document.getElementById('btnGwBuscar').addEventListener('click', function() { gwPage = 1; loadGatewayTransactions(); });
+    document.getElementById('btnGwPrev').addEventListener('click', function() { if (gwPage > 1) { gwPage--; loadGatewayTransactions(); } });
+    document.getElementById('btnGwNext').addEventListener('click', function() { gwPage++; loadGatewayTransactions(); });
+    document.getElementById('btnGwLimpar').addEventListener('click', function() { gwClearFilters(); });
   </script>
 </body>
 </html>

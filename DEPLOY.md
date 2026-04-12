@@ -80,6 +80,27 @@ Alertas opcionais:
 
 **Fila DLQ (webhooks):** falhas ao gravar em `applyfy_transactions` são guardadas em `applyfy_webhook_dlq`. Listagem e reprocessamento: `GET /api/admin/webhook-dlq` e `POST /api/admin/webhook-dlq/retry` com JSON `{"id": <id>}` e o mesmo token admin.
 
+**Cópia local de transações (evolução diária):** os webhooks alimentam `applyfy_transactions`; o painel grava factos agregáveis em `applyfy_tx_facts` e usa-os em `/api/evolucao` para não paginar a API Admin em cada abertura. A sincronização **não corre sozinha dentro do Flask** — use **cron** (ou systemd timer) no servidor.
+
+**Recomendado — a cada hora** (utilizador `www-data` ou o que corre o painel). Com janela curta reduz-se carga na API em cada execução:
+
+```cron
+# A cada hora, no minuto 0 (ajuste o path do venv e do env.sh)
+0 * * * * cd /var/www/applyfy && . ./env.sh && APPLYFY_SYNC_WINDOW_DAYS=2 /var/www/applyfy/venv/bin/python scripts/sync_transactions.py >> /var/www/applyfy/data/cron-sync-tx.log 2>&1
+```
+
+Exemplo ficheiro: [deploy/cron-sync-transactions-hourly.example](deploy/cron-sync-transactions-hourly.example) (`crontab -e` e colar a linha).
+
+Sincronização **diária** (alternativa mais leve na API):
+
+```bash
+cd /var/www/applyfy && . env.sh && /var/www/applyfy/venv/bin/python scripts/sync_transactions.py >> /var/www/applyfy/data/cron.log 2>&1
+```
+
+Variáveis opcionais: `APPLYFY_SYNC_WINDOW_DAYS` (default 14; use **2–7** se correr **horária**), `APPLYFY_SYNC_MAX_PAGES`. O botão em `/integracoes` envia `POST {"quick":true}` (primeiros N produtores, ver `APPLYFY_SYNC_QUICK_*`). Sync **completa** via cron não deve usar `quick`. **HTTP 504** no painel: aumente `proxy_read_timeout` no Nginx para `/api/internal/sync-transactions` (ex.: 600s, ver `nginx-applyfy.conf`) e `--timeout` do Gunicorn (≥600); depois `sudo systemctl daemon-reload && sudo systemctl restart applyfy-painel && sudo nginx -t && sudo systemctl reload nginx`.
+
+Na primeira vez, pode executar `scripts/sync_transactions.py --backfill-webhooks` para derivar factos dos webhooks já guardados. Sincronização HTTP alternativa: `POST /api/internal/sync-transactions` com corpo vazio (janela rolling) ou JSON `{"email","from","to"}`; autenticação: header `X-Applyfy-Sync-Secret` se `APPLYFY_SYNC_SECRET` estiver definido, senão token admin (`X-Applyfy-Admin-Token`) ou sessão Hub (`applyfy.jobs` / `applyfy.admin`).
+
 **Documentação interna:** [docs/RECONCILIACAO.md](docs/RECONCILIACAO.md), [docs/API_VS_PLAYWRIGHT.md](docs/API_VS_PLAYWRIGHT.md).
 
 Para o cron, crie um script que carrega o `.env` antes de rodar, por exemplo `env.sh`:
@@ -171,7 +192,7 @@ Deve imprimir `OK`. Ver também [USABILIDADE.md](USABILIDADE.md) no repositório
 ```bash
 cd /var/www/applyfy
 source venv/bin/activate
-gunicorn --no-control-socket -w 1 -b 127.0.0.1:5000 --timeout 120 app:app
+gunicorn --no-control-socket -w 1 -b 127.0.0.1:5000 --timeout 600 app:app
 ```
 
 Recomendado: usar systemd para manter o Gunicorn rodando.
@@ -190,7 +211,7 @@ WorkingDirectory=/var/www/applyfy
 Environment="PATH=/var/www/applyfy/venv/bin"
 # O prefixo "-" faz o systemd NÃO falhar se o ficheiro não existir (evita Result=resources).
 EnvironmentFile=-/var/www/applyfy/.env
-ExecStart=/var/www/applyfy/venv/bin/gunicorn --no-control-socket -w 1 -b 127.0.0.1:5000 --timeout 120 app:app
+ExecStart=/var/www/applyfy/venv/bin/gunicorn --no-control-socket -w 1 -b 127.0.0.1:5000 --timeout 600 app:app
 Restart=always
 
 [Install]

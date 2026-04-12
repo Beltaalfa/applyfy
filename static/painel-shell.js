@@ -8,14 +8,13 @@
     { href: "/", label: "Painel" },
     { href: "/historico", label: "Histórico" },
     { href: "/evolucao", label: "Evolução" },
-    { href: "/vendas", label: "Vendas" },
-    { href: "/log-vendas", label: "Log vendas" },
     { href: "/transacoes", label: "Transações" },
     { href: "/integracoes", label: "Integrações" },
     { href: "/meta", label: "Meta" },
     { href: "/comercial", label: "Comercial" },
-    { href: "/config-comercial", label: "Config. comercial" },
-    { href: "/produtores", label: "Produtores" },
+    { href: "/produtores", label: "Consultar produtores" },
+    { href: "/saldo", label: "Saldo" },
+    { href: "/taxas", label: "Taxas" },
     { href: "/financeiro", label: "Financeiro" },
     { href: "/log", label: "Log saldos" },
     { href: "/permissoes", label: "Permissões" },
@@ -27,7 +26,6 @@
     if (p.length > 1 && p.endsWith("/")) p = p.slice(0, -1);
     if (p === "/log-vendas.html" || p.endsWith("/log-vendas.html")) return "/log-vendas";
     if (p === "/evolucao.html" || p.endsWith("/evolucao.html")) return "/evolucao";
-    if (p === "/config-comercial.html" || p.endsWith("/config-comercial.html")) return "/config-comercial";
     if (p === "/index.html" || p.endsWith("/index.html")) return "/";
     return p;
   }

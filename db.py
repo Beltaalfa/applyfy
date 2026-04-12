@@ -115,6 +115,27 @@ def init_db():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_applyfy_transactions_offer_code ON applyfy_transactions(offer_code);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_applyfy_transactions_received_at ON applyfy_transactions(received_at);")
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS applyfy_tx_facts (
+                transaction_id TEXT PRIMARY KEY,
+                producer_email TEXT NOT NULL,
+                tx_day DATE NOT NULL,
+                vendas_net NUMERIC(16,2) NOT NULL DEFAULT 0,
+                chargeback NUMERIC(16,2) NOT NULL DEFAULT 0,
+                source TEXT NOT NULL DEFAULT 'webhook',
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        cur.execute(
+            "CREATE INDEX IF NOT EXISTS idx_applyfy_tx_facts_email_day ON applyfy_tx_facts (lower(producer_email), tx_day);"
+        )
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS applyfy_sync_state (
+                scope TEXT PRIMARY KEY,
+                value_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS applyfy_webhook_dlq (
                 id SERIAL PRIMARY KEY,
                 received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -404,18 +425,29 @@ def get_relatorio_por_data(run_at):
     ]
 
 
-def get_evolucao_produtor(email):
-    """Retorna lista de { run_at, nome, saldo_pendente, ... } para o email, ordenado por run_at."""
+def get_evolucao_produtor(email, date_from=None, date_to=None):
+    """Retorna lista de { run_at, nome, saldo_pendente, ... } para o email, ordenado por run_at.
+
+    date_from / date_to: strings 'YYYY-MM-DD' ou None — filtram run_at::date (inclusive).
+    """
     if not get_database_url():
         return []
     init_db()
+    where = "email = %s"
+    params = [email.strip()]
+    if date_from:
+        where += " AND run_at::date >= %s::date"
+        params.append(str(date_from).strip()[:32])
+    if date_to:
+        where += " AND run_at::date <= %s::date"
+        params.append(str(date_to).strip()[:32])
     with cursor() as cur:
         cur.execute(
-            """
+            f"""
             SELECT run_at, nome, saldo_pendente, saldo_retido, saldo_disponivel, total_sacado, vendas_liquidas, indicacao, outros
-            FROM saldos_historico WHERE email = %s ORDER BY run_at;
+            FROM saldos_historico WHERE {where} ORDER BY run_at;
             """,
-            (email,),
+            tuple(params),
         )
         rows = cur.fetchall()
     return [
@@ -479,6 +511,179 @@ def insert_webhook_transaction(transaction_id, event, offer_code, producer_id, p
             return "duplicate", None
         except Exception as e:
             return "error", str(e)[:500]
+
+
+def upsert_tx_fact(fact: dict) -> None:
+    """
+    Insere ou actualiza um facto de transação (webhook ou api_sync).
+    Se já existir fact com source=api_sync, não sobrescreve com webhook.
+    """
+    if not get_database_url():
+        return
+    init_db()
+    txid = str(fact["transaction_id"])
+    email = (fact["producer_email"] or "").strip().lower()
+    day = fact["tx_day"]
+    if isinstance(day, str):
+        day = date.fromisoformat(day[:10])
+    vn = float(fact.get("vendas_net") or 0)
+    cb = float(fact.get("chargeback") or 0)
+    src = (fact.get("source") or "webhook").strip() or "webhook"
+    with cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO applyfy_tx_facts (transaction_id, producer_email, tx_day, vendas_net, chargeback, source, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, NOW())
+            ON CONFLICT (transaction_id) DO UPDATE SET
+              producer_email = EXCLUDED.producer_email,
+              tx_day = EXCLUDED.tx_day,
+              vendas_net = EXCLUDED.vendas_net,
+              chargeback = EXCLUDED.chargeback,
+              source = CASE
+                WHEN applyfy_tx_facts.source = 'api_sync' AND EXCLUDED.source = 'webhook' THEN applyfy_tx_facts.source
+                ELSE EXCLUDED.source
+              END,
+              updated_at = CASE
+                WHEN applyfy_tx_facts.source = 'api_sync' AND EXCLUDED.source = 'webhook' THEN applyfy_tx_facts.updated_at
+                ELSE NOW()
+              END;
+            """,
+            (txid, email, day, vn, cb, src),
+        )
+
+
+def count_tx_facts_in_range(email: str, date_from: str, date_to: str) -> int:
+    """Quantidade de factos no intervalo (para decidir fallback API)."""
+    if not get_database_url():
+        return 0
+    init_db()
+    em = (email or "").strip().lower()
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT COUNT(*) FROM applyfy_tx_facts
+            WHERE lower(trim(producer_email)) = %s AND tx_day >= %s::date AND tx_day <= %s::date;
+            """,
+            (em, date_from[:10], date_to[:10]),
+        )
+        r = cur.fetchone()
+    return int(r[0]) if r else 0
+
+
+def daily_series_from_tx_facts(email: str, d_from: str, d_to: str) -> list[dict]:
+    """Série diária a partir da cópia local; preenche todos os dias com zeros onde não há movimento."""
+    if not get_database_url():
+        return []
+    init_db()
+    em = (email or "").strip().lower()
+    d0 = date.fromisoformat(d_from[:10])
+    d1 = date.fromisoformat(d_to[:10])
+    daily_vendas: dict[str, float] = {}
+    daily_cb: dict[str, float] = {}
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT tx_day::text, COALESCE(SUM(vendas_net), 0), COALESCE(SUM(chargeback), 0)
+            FROM applyfy_tx_facts
+            WHERE lower(trim(producer_email)) = %s AND tx_day >= %s::date AND tx_day <= %s::date
+            GROUP BY tx_day ORDER BY tx_day;
+            """,
+            (em, d_from[:10], d_to[:10]),
+        )
+        for row in cur.fetchall():
+            daily_vendas[row[0]] = float(row[1])
+            daily_cb[row[0]] = float(row[2])
+    out: list[dict] = []
+    cur_d = d0
+    while cur_d <= d1:
+        ks = cur_d.isoformat()
+        out.append(
+            {
+                "date": ks,
+                "vendas_net": round(daily_vendas.get(ks, 0.0), 2),
+                "chargeback": round(daily_cb.get(ks, 0.0), 2),
+            }
+        )
+        cur_d += timedelta(days=1)
+    return out
+
+
+def get_sync_state(scope: str) -> dict:
+    if not get_database_url():
+        return {}
+    init_db()
+    with cursor() as cur:
+        cur.execute("SELECT value_json FROM applyfy_sync_state WHERE scope = %s;", (scope,))
+        r = cur.fetchone()
+    if not r or r[0] is None:
+        return {}
+    v = r[0]
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, str):
+        try:
+            return json.loads(v)
+        except Exception:
+            return {}
+    return {}
+
+
+def set_sync_state(scope: str, value: dict) -> None:
+    if not get_database_url():
+        return
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            """
+            INSERT INTO applyfy_sync_state (scope, value_json, updated_at)
+            VALUES (%s, %s::jsonb, NOW())
+            ON CONFLICT (scope) DO UPDATE SET value_json = EXCLUDED.value_json, updated_at = NOW();
+            """,
+            (scope, json.dumps(value, ensure_ascii=False)),
+        )
+
+
+def backfill_tx_facts_from_webhooks(batch_size: int = 2000, after_id: int = 0) -> tuple[int, int, int]:
+    """
+    Percorre applyfy_transactions e preenche applyfy_tx_facts (útil após migração).
+    Retorna (linhas_processadas, factos_upsertidos, último_id_visto).
+    Chamar em loop com after_id = último_id até processed < batch_size.
+    """
+    if not get_database_url():
+        return 0, 0, after_id
+    init_db()
+    import applyfy_tx_facts
+
+    processed = 0
+    upserted = 0
+    last_id = int(after_id)
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, payload FROM applyfy_transactions WHERE id > %s ORDER BY id ASC LIMIT %s;
+            """,
+            (int(after_id), int(batch_size)),
+        )
+        rows = cur.fetchall()
+    for row_id, payload in rows:
+        processed += 1
+        last_id = int(row_id)
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                continue
+        if not isinstance(payload, dict):
+            continue
+        fact = applyfy_tx_facts.fact_from_webhook_payload(payload)
+        if not fact:
+            continue
+        try:
+            upsert_tx_fact(fact)
+            upserted += 1
+        except Exception:
+            continue
+    return processed, upserted, last_id
 
 
 def insert_webhook_dlq(event, payload, error_message):
@@ -608,6 +813,49 @@ def get_last_webhook_received_at():
     init_db()
     with cursor() as cur:
         cur.execute("SELECT MAX(received_at) FROM applyfy_transactions;")
+        row = cur.fetchone()
+    return row[0] if row and row[0] else None
+
+
+def get_last_rpa_activity_at():
+    """
+    Última actividade de automação (RPA): maior entre export de saldos (export_runs),
+    import de vendas (applyfy_vendas.imported_at) e log de import (applyfy_import_log), quando existir.
+    """
+    if not get_database_url():
+        return None
+    init_db()
+    times = []
+    le = get_last_export_run_at()
+    if le:
+        times.append(le)
+    with cursor() as cur:
+        for sql in (
+            "SELECT MAX(imported_at) FROM applyfy_vendas;",
+            "SELECT MAX(run_at) FROM applyfy_import_log;",
+        ):
+            try:
+                cur.execute(sql)
+                row = cur.fetchone()
+                if row and row[0] is not None:
+                    times.append(row[0])
+            except Exception:
+                pass
+    if not times:
+        return None
+    return max(times)
+
+
+def get_last_applyfy_api_tx_sync_at():
+    """Última execução da sincronização Admin API → applyfy_tx_facts (scope last_rolling_sync)."""
+    if not get_database_url():
+        return None
+    init_db()
+    with cursor() as cur:
+        cur.execute(
+            "SELECT updated_at FROM applyfy_sync_state WHERE scope = %s;",
+            ("last_rolling_sync",),
+        )
         row = cur.fetchone()
     return row[0] if row and row[0] else None
 

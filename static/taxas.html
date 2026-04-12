@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <title>Taxas | Applyfy</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/painel-theme.css">
+  <style>
+    .taxas-lead { color: var(--zinc-400); font-size: 0.92rem; max-width: 46rem; margin: 0 0 1rem; line-height: 1.5; }
+    .table-wrap.flat .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .table-wrap.flat td.tax-cell { font-size: 0.8rem; color: var(--zinc-200); white-space: nowrap; }
+    .table-wrap.flat th.tax-group { font-size: 0.72rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--zinc-400); background: rgba(39, 39, 42, 0.45); border-left: 1px solid var(--border); }
+    .table-wrap.flat thead tr:nth-child(2) th { font-size: 0.72rem; font-weight: 500; color: var(--zinc-500); padding-top: 0.35rem; padding-bottom: 0.35rem; }
+    .gw-wrap { overflow-x: auto; }
+  </style>
+</head>
+<body data-active="/taxas">
+  <div class="app-shell" id="app-shell">
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+    </button>
+    <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
+    <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
+    <div class="main-column">
+      <header class="top-bar">
+        <div class="top-bar-inner">
+          <h1 class="page-title">Taxas</h1>
+        </div>
+      </header>
+      <main class="main-content">
+        <p class="taxas-lead">Campos da API Applyfy em <code>taxes.{pix|card|boleto|withdraw|crypto}</code>: <strong>percentage</strong> (var.), <strong>fixed</strong> (fixo R$), <strong>fundLockPercentage</strong> + <strong>fundLockDays</strong> (retenção / reserva), e no saque <strong>minimumFee</strong> (mín.). Cartão pode trazer <strong>installments6/12*</strong>. <strong>Antecipação</strong> (ecrã separado na Applyfy) não costuma vir neste JSON. <strong>Total vendas</strong> = <code>totals.sold</code>.</p>
+        <div class="filtro">
+          <label for="taxasBusca">Nome ou e-mail</label>
+          <input type="search" id="taxasBusca" placeholder="Filtrar…" autocomplete="off" style="min-width:14rem;">
+          <label for="taxasPageSize">Por página</label>
+          <select id="taxasPageSize">
+            <option value="10">10</option>
+            <option value="20" selected>20</option>
+            <option value="50">50</option>
+          </select>
+          <button type="button" class="btn btn-primary" id="btnTaxasConsultar">Consultar</button>
+          <button type="button" class="btn btn-secondary" id="btnTaxasPrev">Anterior</button>
+          <button type="button" class="btn btn-secondary" id="btnTaxasNext">Seguinte</button>
+        </div>
+        <p id="msgTaxas" class="text-muted" style="margin:0.35rem 0 0.75rem;">A carregar…</p>
+        <div class="card gw-wrap">
+          <div class="table-wrap flat">
+            <table>
+              <thead>
+                <tr>
+                  <th rowspan="2">Produtor</th>
+                  <th rowspan="2">E-mail</th>
+                  <th colspan="4" class="tax-group">PIX</th>
+                  <th colspan="8" class="tax-group">Cartão</th>
+                  <th colspan="4" class="tax-group">Boleto</th>
+                  <th colspan="5" class="tax-group">Saque</th>
+                  <th colspan="4" class="tax-group">Crypto</th>
+                  <th rowspan="2" class="num">Total vendas (API)</th>
+                </tr>
+                <tr>
+                  <th class="num">Var. %</th>
+                  <th class="num">Fixo</th>
+                  <th class="num">Ret. %</th>
+                  <th class="num">Dias</th>
+                  <th class="num">Var. %</th>
+                  <th class="num">Fixo</th>
+                  <th class="num">Ret. %</th>
+                  <th class="num">Dias</th>
+                  <th class="num">6x %</th>
+                  <th class="num">6x R$</th>
+                  <th class="num">12x %</th>
+                  <th class="num">12x R$</th>
+                  <th class="num">Var. %</th>
+                  <th class="num">Fixo</th>
+                  <th class="num">Ret. %</th>
+                  <th class="num">Dias</th>
+                  <th class="num">Var. %</th>
+                  <th class="num">Fixo</th>
+                  <th class="num">Mín.</th>
+                  <th class="num">Ret. %</th>
+                  <th class="num">Dias</th>
+                  <th class="num">Var. %</th>
+                  <th class="num">Fixo</th>
+                  <th class="num">Ret. %</th>
+                  <th class="num">Dias</th>
+                </tr>
+              </thead>
+              <tbody id="taxasTbody">
+                <tr><td colspan="28" class="empty">A carregar…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="/static/painel-shell.js?v=14" defer></script>
+  <script>
+    function gwEsc(s) {
+      if (s == null || s === '') return '';
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+    }
+    function fmtBRL(n) {
+      if (n == null || n === '') return '–';
+      var x = Number(n);
+      if (isNaN(x)) return gwEsc(n);
+      return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(x);
+    }
+    var TD = '–';
+    function taxPct(o) {
+      if (!o || o.percentage == null || o.percentage === '') return TD;
+      return Number(o.percentage).toLocaleString('pt-BR') + '%';
+    }
+    function taxFixed(o) {
+      if (!o || o.fixed == null || Number(o.fixed) <= 0) return TD;
+      return fmtBRL(o.fixed);
+    }
+    function taxRetPct(o) {
+      if (!o || o.fundLockPercentage == null || o.fundLockPercentage === '') return TD;
+      return Number(o.fundLockPercentage).toLocaleString('pt-BR') + '%';
+    }
+    function taxRetDays(o) {
+      if (!o || o.fundLockDays == null || Number(o.fundLockDays) <= 0) return TD;
+      return String(Number(o.fundLockDays));
+    }
+    function taxMin(o) {
+      if (!o || o.minimumFee == null || Number(o.minimumFee) <= 0) return TD;
+      return fmtBRL(o.minimumFee);
+    }
+    function cardInstPct(o, n) {
+      var k = n === 6 ? 'installments6Percent' : 'installments12Percent';
+      if (!o || o[k] == null || o[k] === '') return TD;
+      return Number(o[k]).toLocaleString('pt-BR') + '%';
+    }
+    function cardInstFixed(o, n) {
+      var k = n === 6 ? 'installments6Fixed' : 'installments12Fixed';
+      if (!o || o[k] == null || Number(o[k]) <= 0) return TD;
+      return fmtBRL(o[k]);
+    }
+    var COL_SPAN = 28;
+    var taxasPage = 1;
+    var taxasLastPag = {};
+
+    function buildTaxasQuery() {
+      var params = new URLSearchParams();
+      params.set('page', String(taxasPage));
+      params.set('pageSize', String(parseInt(document.getElementById('taxasPageSize').value, 10) || 20));
+      var q = document.getElementById('taxasBusca').value.trim();
+      if (q) params.set('nameOrEmail', q);
+      return params;
+    }
+    function gatewayProducersUrl() {
+      var u = new URL('/api/gateway/producers', window.location.origin);
+      buildTaxasQuery().forEach(function (value, key) {
+        u.searchParams.set(key, value);
+      });
+      return u.toString();
+    }
+    function formatErr(status, bodyText) {
+      var t = (bodyText || '').trim();
+      if (/^<!doctype/i.test(t) || /^<html/i.test(t)) {
+        return status === 404 ? 'HTTP 404 — confirme deploy da rota /api/gateway/producers.' : 'HTML (HTTP ' + status + ')';
+      }
+      var j = null;
+      try { j = t ? JSON.parse(t) : null; } catch (e) { j = null; }
+      if (j && j.error && j.error.message) return String(j.error.message);
+      return t.slice(0, 300) || ('HTTP ' + status);
+    }
+    function setNavButtons() {
+      var tp = taxasLastPag.totalPages != null ? Number(taxasLastPag.totalPages) : null;
+      document.getElementById('btnTaxasPrev').disabled = taxasPage <= 1;
+      document.getElementById('btnTaxasNext').disabled = tp != null && tp > 0 && taxasPage >= tp;
+    }
+    function loadTaxas() {
+      var msg = document.getElementById('msgTaxas');
+      var tbody = document.getElementById('taxasTbody');
+      msg.textContent = 'A carregar…';
+      fetch(gatewayProducersUrl(), { credentials: 'same-origin' })
+        .then(function (r) { return r.text().then(function (t) { return { ok: r.ok, status: r.status, t: t }; }); })
+        .then(function (o) {
+          var data = null;
+          try { data = o.t ? JSON.parse(o.t) : null; } catch (e) { data = null; }
+          if (!o.ok) {
+            msg.textContent = 'Erro: ' + formatErr(o.status, o.t);
+            tbody.innerHTML = '<tr><td colspan="' + COL_SPAN + '" class="empty">' + gwEsc(formatErr(o.status, o.t).slice(0, 200)) + '</td></tr>';
+            setNavButtons();
+            return;
+          }
+          if (!data || data.success === false) {
+            msg.textContent = 'Resposta inválida.';
+            tbody.innerHTML = '<tr><td colspan="' + COL_SPAN + '" class="empty">Resposta inválida.</td></tr>';
+            setNavButtons();
+            return;
+          }
+          var d = data.data || {};
+          var pag = d.pagination || {};
+          taxasLastPag = pag;
+          var items = d.items || [];
+          msg.textContent =
+            'Página ' + (pag.page != null ? pag.page : taxasPage) + ' / ' + (pag.totalPages != null ? pag.totalPages : '?') +
+            ' — ' + (pag.count != null ? pag.count : '?') + ' produtor(es).';
+          if (!items.length) {
+            tbody.innerHTML = '<tr><td colspan="' + COL_SPAN + '" class="empty">Nenhum resultado.</td></tr>';
+            setNavButtons();
+            return;
+          }
+          tbody.innerHTML = items.map(function (p) {
+            var nome = gwEsc(p.displayName || p.name || '–');
+            var em = gwEsc(p.email || '–');
+            var tx = p.taxes || {};
+            var px = tx.pix || {};
+            var cd = tx.card || {};
+            var bl = tx.boleto || {};
+            var w = tx.withdraw || {};
+            var cr = tx.crypto || {};
+            var tot = p.totals || {};
+            return '<tr>' +
+              '<td>' + nome + '</td>' +
+              '<td><code style="font-size:0.85em;">' + em + '</code></td>' +
+              '<td class="num tax-cell">' + gwEsc(taxPct(px)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxFixed(px)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxRetPct(px)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxRetDays(px)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxPct(cd)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxFixed(cd)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxRetPct(cd)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxRetDays(cd)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(cardInstPct(cd, 6)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(cardInstFixed(cd, 6)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(cardInstPct(cd, 12)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(cardInstFixed(cd, 12)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxPct(bl)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxFixed(bl)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxRetPct(bl)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxRetDays(bl)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxPct(w)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxFixed(w)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxMin(w)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxRetPct(w)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxRetDays(w)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxPct(cr)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxFixed(cr)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxRetPct(cr)) + '</td>' +
+              '<td class="num tax-cell">' + gwEsc(taxRetDays(cr)) + '</td>' +
+              '<td class="num">' + fmtBRL(tot.sold) + '</td>' +
+              '</tr>';
+          }).join('');
+          setNavButtons();
+        })
+        .catch(function (e) {
+          msg.textContent = 'Erro: ' + (e.message || '');
+          setNavButtons();
+        });
+    }
+    document.getElementById('btnTaxasConsultar').addEventListener('click', function () { taxasPage = 1; loadTaxas(); });
+    document.getElementById('btnTaxasPrev').addEventListener('click', function () { if (taxasPage > 1) { taxasPage--; loadTaxas(); } });
+    document.getElementById('btnTaxasNext').addEventListener('click', function () {
+      var tp = taxasLastPag.totalPages != null ? Number(taxasLastPag.totalPages) : null;
+      if (tp != null && taxasPage >= tp) return;
+      taxasPage++;
+      loadTaxas();
+    });
+    document.getElementById('taxasBusca').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); taxasPage = 1; loadTaxas(); }
+    });
+    loadTaxas();
+  </script>
+</body>
+</html>

@@ -193,6 +193,7 @@ def is_public_path(path: str) -> bool:
     exact = {
         "/health",
         "/api/health",
+        "/api/gateway/ping",
         "/api/_debug/client-log",
         "/api/me",
         "/api/webhooks/applyfy",
@@ -420,10 +421,15 @@ def session_can_access_path(path: str) -> bool:
         return "applyfy.admin" in perms
     if "hub_allowed_screens" not in session:
         return True
+    allowed = set(session.get("hub_allowed_screens") or [])
+    ap = normalize_applyfy_path(path)
+    # Mesma API que listagem de produtores — ecrãs Saldo / Taxas também.
+    if ap.startswith("/api/gateway/producer"):
+        if "/produtores" in allowed or "/saldo" in allowed or "/taxas" in allowed:
+            return True
     sid = path_to_screen_id(path)
     if sid is None:
         return False
-    allowed = set(session.get("hub_allowed_screens") or [])
     return sid in allowed
 
 
@@ -522,7 +528,6 @@ def hub_me_payload() -> dict[str, Any]:
                 nav[href] = href in allowed
     else:
         nav = {href: session_has_permission(perm) for href, perm in NAV_PERMISSIONS.items()}
-    nav["/config-comercial"] = "applyfy.admin" in perms
     out: dict[str, Any] = {
         "auth_enabled": True,
         "authenticated": True,
@@ -550,13 +555,13 @@ NAV_PERMISSIONS: dict[str, str] = {
     "/": "applyfy.painel",
     "/historico": "applyfy.painel",
     "/evolucao": "applyfy.painel",
-    "/vendas": "applyfy.painel",
-    "/log-vendas": "applyfy.painel",
     "/transacoes": "applyfy.painel",
     "/integracoes": "applyfy.jobs",
     "/meta": "applyfy.painel",
     "/comercial": "applyfy.painel",
     "/produtores": "applyfy.painel",
+    "/saldo": "applyfy.painel",
+    "/taxas": "applyfy.painel",
     "/financeiro": "applyfy.financeiro",
     "/log": "applyfy.painel",
     "/permissoes": "applyfy.painel",

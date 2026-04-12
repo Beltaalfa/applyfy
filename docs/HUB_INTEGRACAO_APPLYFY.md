@@ -8,6 +8,8 @@ Documento de contrato entre **Hub** (`hub.northempresarial.com`) e **Applyfy** (
 
 **Para o Cursor no repo Hub (login Applyfy ainda não funciona):** [`docs/CURSOR_HUB_DEBUG_LOGIN.md`](CURSOR_HUB_DEBUG_LOGIN.md)
 
+**Proxy API Admin (transações/produtores no painel, chaves só no servidor):** [`docs/API_GATEWAY.md`](API_GATEWAY.md)
+
 ---
 
 ## Resumo Applyfy (o que configurar aqui)
@@ -80,7 +82,7 @@ O Hub **não** define `iss` nem `aud`. O Applyfy valida com `verify_aud` e `veri
 - `applyfy.comercial` — o nome deste utilizador pode ser escolhido como **vendedor** (dropdown no Applyfy).
 - `applyfy.comercial.gerente` — pode **editar** atribuições vendedor → produtor; vê todos os produtores na tabela (com ecrã autorizado). Sem esta flag mas com `applyfy.comercial`, o utilizador **só vê os produtores da sua carteira** (filtro no Applyfy por `vendedor_user_id` / nome legado).
 
-Gestão das flags: **painel Applyfy → Config. comercial** (`/config-comercial`; requer `applyfy.admin` no JWT). O Hub pode manter um redireccionamento de `/admin/config/applyfy-carteira` para esta página quando `NEXT_PUBLIC_APPLYFY_URL` está definido. Após alterar flags, o utilizador deve voltar a abrir o Applyfy (ou esperar renovação do cookie JWT) para as claims atualizarem.
+Gestão das flags: **painel Applyfy → Permissões** (`/permissoes`; requer `applyfy.admin` no JWT). O Hub pode manter um redireccionamento de `/admin/config/applyfy-carteira` para o painel quando `NEXT_PUBLIC_APPLYFY_URL` está definido (a rota antiga `/config-comercial` redirecciona para `/permissoes`). Após alterar flags, o utilizador deve voltar a abrir o Applyfy (ou esperar renovação do cookie JWT) para as claims atualizarem.
 
 **Claims opcionais de perfil no JWT:** `email`, `name` (para filtro e legado de nomes).
 

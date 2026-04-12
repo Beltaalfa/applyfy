@@ -1,0 +1,8 @@
+# Crontab — sincronização horária API Admin → applyfy_tx_facts
+# Instalar: crontab -e (como o utilizador que deve correr o job, ex.: www-data)
+# Ajuste /var/www/applyfy e o path do venv se o seu deploy for diferente.
+#
+# APPLYFY_SYNC_WINDOW_DAYS=2 — janela de dias por execução (adequado a sync horária).
+# Para histórico inicial maior, corra uma vez à mão: python scripts/sync_transactions.py --window-days 90 (não suportado no script; use env ou POST com intervalo por email).
+
+0 * * * * cd /var/www/applyfy && . ./env.sh && APPLYFY_SYNC_WINDOW_DAYS=2 /var/www/applyfy/venv/bin/python scripts/sync_transactions.py >> /var/www/applyfy/data/cron-sync-tx.log 2>&1
