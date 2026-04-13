@@ -17,6 +17,9 @@ __all__ = [
     "daily_series_from_items",
 ]
 
+_DBG_H5_LOGS = 0
+_DBG_H5_LOG_CAP = 8
+
 
 def parse_tx_day(iso_ts: str | None) -> str | None:
     if not iso_ts:
@@ -81,12 +84,72 @@ def _item_from_webhook_payload(payload: dict[str, Any]) -> dict[str, Any] | None
         "chargeAmount": trans.get("amount"),
         "amount": trans.get("amount"),
         "producerEmail": email,
+        "acquirer": trans.get("acquirer"),
+        "paymentMethod": trans.get("paymentMethod") or trans.get("payment_method"),
     }
 
 
 def it_email(payload_or_item: dict[str, Any]) -> str:
     v = (payload_or_item.get("producerEmail") or payload_or_item.get("producer_email") or "").strip()
     return v
+
+
+def _coerce_acquirer_value(v: Any) -> str | None:
+    """Aceita string ou objeto (ex.: ``{{name, slug}}``) como na API Admin."""
+    if v is None:
+        return None
+    if isinstance(v, dict):
+        for k in ("name", "slug", "id", "code", "key", "value"):
+            x = v.get(k)
+            if x is not None and str(x).strip():
+                return str(x).strip()
+        return None
+    s = str(v).strip()
+    return s or None
+
+
+def _extract_acquirer_payment_from_api_item(item: dict[str, Any]) -> tuple[str | None, str | None]:
+    """
+    GET /transactions devolve muitas vezes ``acquirer`` / ``paymentMethod`` dentro de ``transaction``,
+    não no raiz do item — alinhar ao webhook (``payload['transaction']``).
+    Algumas respostas aninham ainda em ``payment``, ``data`` ou usam ``gateway`` / ``acquirerName``.
+    """
+    trans = item.get("transaction")
+    trans = trans if isinstance(trans, dict) else {}
+    data = item.get("data") if isinstance(item.get("data"), dict) else {}
+    pay_t = trans.get("payment") if isinstance(trans.get("payment"), dict) else {}
+    pay_i = item.get("payment") if isinstance(item.get("payment"), dict) else {}
+
+    def _pm_from(d: dict[str, Any]) -> str | None:
+        pm = d.get("paymentMethod") or d.get("payment_method")
+        if isinstance(pm, dict):
+            pm = pm.get("name") or pm.get("code") or pm.get("id")
+        if pm is None:
+            return None
+        s = str(pm).strip()
+        return s or None
+
+    acq = None
+    for cand in (
+        item.get("acquirer"),
+        trans.get("acquirer"),
+        pay_t.get("acquirer"),
+        pay_i.get("acquirer"),
+        data.get("acquirer"),
+        item.get("gateway"),
+        trans.get("gateway"),
+        data.get("gateway"),
+        item.get("acquirerName"),
+        item.get("acquirer_name"),
+        trans.get("acquirerName"),
+        trans.get("acquirer_name"),
+    ):
+        acq = _coerce_acquirer_value(cand)
+        if acq:
+            break
+
+    pm = _pm_from(item) or _pm_from(trans) or _pm_from(data) or _pm_from(pay_t) or _pm_from(pay_i)
+    return acq, pm
 
 
 def fact_from_api_item(item: dict[str, Any]) -> dict[str, Any] | None:
@@ -106,6 +169,37 @@ def fact_from_api_item(item: dict[str, Any]) -> dict[str, Any] | None:
         vendas_net, chargeback = 0.0, abs(amt)
     else:
         vendas_net, chargeback = max(amt, 0.0), 0.0
+    acq_raw, pm_raw = _extract_acquirer_payment_from_api_item(item)
+
+    # #region agent log
+    global _DBG_H5_LOGS
+    try:
+        trans = item.get("transaction") if isinstance(item.get("transaction"), dict) else {}
+        top_a = item.get("acquirer")
+        nested_a = trans.get("acquirer") if trans else None
+        if (
+            _DBG_H5_LOGS < _DBG_H5_LOG_CAP
+            and (not (top_a is not None and str(top_a).strip()))
+            and (nested_a is not None and str(nested_a).strip())
+        ):
+            import json
+            import time as _time
+
+            _DBG_H5_LOGS += 1
+            _pl = {
+                "sessionId": "d1495d",
+                "hypothesisId": "H5",
+                "location": "applyfy_tx_facts.py:fact_from_api_item",
+                "message": "adquirente só no objeto transaction (API)",
+                "data": {"resolved_acquirer": acq_raw, "transaction_id": str(tid)[:32]},
+                "timestamp": int(_time.time() * 1000),
+            }
+            with open("/var/www/.cursor/debug-d1495d.log", "a", encoding="utf-8") as _df:
+                _df.write(json.dumps(_pl, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
     return {
         "transaction_id": str(tid),
         "producer_email": email,
@@ -113,6 +207,8 @@ def fact_from_api_item(item: dict[str, Any]) -> dict[str, Any] | None:
         "vendas_net": round(vendas_net, 2),
         "chargeback": round(chargeback, 2),
         "source": "api_sync",
+        "acquirer": acq_raw,
+        "payment_method": pm_raw,
     }
 
 
@@ -129,6 +225,8 @@ def fact_from_webhook_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     else:
         vendas_net, chargeback = max(amt, 0.0), 0.0
     email = (it.get("producerEmail") or "").strip().lower()
+    acq_raw = it.get("acquirer")
+    pm_raw = it.get("paymentMethod") or it.get("payment_method")
     return {
         "transaction_id": str(it["id"]),
         "producer_email": email,
@@ -136,6 +234,8 @@ def fact_from_webhook_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
         "vendas_net": round(vendas_net, 2),
         "chargeback": round(chargeback, 2),
         "source": "webhook",
+        "acquirer": str(acq_raw).strip() if acq_raw is not None and str(acq_raw).strip() else None,
+        "payment_method": str(pm_raw).strip() if pm_raw is not None and str(pm_raw).strip() else None,
     }
 
 

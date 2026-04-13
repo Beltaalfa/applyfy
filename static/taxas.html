@@ -4,12 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
+  <link rel="icon" href="/static/logo/Icone.png?v=2" type="image/png">
+  <link rel="apple-touch-icon" href="/static/logo/Icone.png?v=2">
   <title>Taxas | Applyfy</title>
   <link rel="manifest" href="/static/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/painel-theme.css">
+  <link rel="stylesheet" href="/static/painel-theme.css?v=gold7">
   <style>
     .taxas-lead { color: var(--zinc-400); font-size: 0.92rem; max-width: 46rem; margin: 0 0 1rem; line-height: 1.5; }
     .table-wrap.flat .num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -22,7 +24,7 @@
 <body data-active="/taxas">
   <div class="app-shell" id="app-shell">
     <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <img src="/static/logo/Icone.png?v=2" alt="" class="sidebar-toggle__icon" decoding="async" />
     </button>
     <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
     <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
@@ -33,7 +35,7 @@
         </div>
       </header>
       <main class="main-content">
-        <p class="taxas-lead">Campos da API Applyfy em <code>taxes.{pix|card|boleto|withdraw|crypto}</code>: <strong>percentage</strong> (var.), <strong>fixed</strong> (fixo R$), <strong>fundLockPercentage</strong> + <strong>fundLockDays</strong> (retenção / reserva), e no saque <strong>minimumFee</strong> (mín.). Cartão pode trazer <strong>installments6/12*</strong>. <strong>Antecipação</strong> (ecrã separado na Applyfy) não costuma vir neste JSON. <strong>Total vendas</strong> = <code>totals.sold</code>.</p>
+        <p class="taxas-lead">Taxas por produtor (Pix, cartão, boleto, saque, cripto): percentuais, valores fixos e, quando existir, retenção e prazos. O total de vendas vem do resumo da Applyfy.</p>
         <div class="filtro">
           <label for="taxasBusca">Nome ou e-mail</label>
           <input type="search" id="taxasBusca" placeholder="Filtrar…" autocomplete="off" style="min-width:14rem;">
@@ -46,48 +48,49 @@
           <button type="button" class="btn btn-primary" id="btnTaxasConsultar">Consultar</button>
           <button type="button" class="btn btn-secondary" id="btnTaxasPrev">Anterior</button>
           <button type="button" class="btn btn-secondary" id="btnTaxasNext">Seguinte</button>
+          <button type="button" class="btn btn-primary" id="btnTaxasXlsx">Exportar XLSX</button>
         </div>
         <p id="msgTaxas" class="text-muted" style="margin:0.35rem 0 0.75rem;">A carregar…</p>
         <div class="card gw-wrap">
           <div class="table-wrap flat">
-            <table>
+            <table id="taxasTable">
               <thead>
                 <tr>
-                  <th rowspan="2">Produtor</th>
-                  <th rowspan="2">E-mail</th>
+                  <th rowspan="2" data-col="0" data-type="text">Produtor <span class="sort-icon">↕</span></th>
+                  <th rowspan="2" data-col="1" data-type="text">E-mail <span class="sort-icon">↕</span></th>
                   <th colspan="4" class="tax-group">PIX</th>
                   <th colspan="8" class="tax-group">Cartão</th>
                   <th colspan="4" class="tax-group">Boleto</th>
                   <th colspan="5" class="tax-group">Saque</th>
                   <th colspan="4" class="tax-group">Crypto</th>
-                  <th rowspan="2" class="num">Total vendas (API)</th>
+                  <th rowspan="2" class="num" data-col="27" data-type="num">Total vendas (API) <span class="sort-icon">↕</span></th>
                 </tr>
                 <tr>
-                  <th class="num">Var. %</th>
-                  <th class="num">Fixo</th>
-                  <th class="num">Ret. %</th>
-                  <th class="num">Dias</th>
-                  <th class="num">Var. %</th>
-                  <th class="num">Fixo</th>
-                  <th class="num">Ret. %</th>
-                  <th class="num">Dias</th>
-                  <th class="num">6x %</th>
-                  <th class="num">6x R$</th>
-                  <th class="num">12x %</th>
-                  <th class="num">12x R$</th>
-                  <th class="num">Var. %</th>
-                  <th class="num">Fixo</th>
-                  <th class="num">Ret. %</th>
-                  <th class="num">Dias</th>
-                  <th class="num">Var. %</th>
-                  <th class="num">Fixo</th>
-                  <th class="num">Mín.</th>
-                  <th class="num">Ret. %</th>
-                  <th class="num">Dias</th>
-                  <th class="num">Var. %</th>
-                  <th class="num">Fixo</th>
-                  <th class="num">Ret. %</th>
-                  <th class="num">Dias</th>
+                  <th class="num" data-col="2" data-type="num">Var. % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="3" data-type="num">Fixo <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="4" data-type="num">Ret. % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="5" data-type="num">Dias <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="6" data-type="num">Var. % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="7" data-type="num">Fixo <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="8" data-type="num">Ret. % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="9" data-type="num">Dias <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="10" data-type="num">6x % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="11" data-type="num">6x R$ <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="12" data-type="num">12x % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="13" data-type="num">12x R$ <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="14" data-type="num">Var. % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="15" data-type="num">Fixo <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="16" data-type="num">Ret. % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="17" data-type="num">Dias <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="18" data-type="num">Var. % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="19" data-type="num">Fixo <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="20" data-type="num">Mín. <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="21" data-type="num">Ret. % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="22" data-type="num">Dias <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="23" data-type="num">Var. % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="24" data-type="num">Fixo <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="25" data-type="num">Ret. % <span class="sort-icon">↕</span></th>
+                  <th class="num" data-col="26" data-type="num">Dias <span class="sort-icon">↕</span></th>
                 </tr>
               </thead>
               <tbody id="taxasTbody">
@@ -99,7 +102,8 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js?v=14" defer></script>
+  <script src="/static/painel-shell.js?v=28" defer></script>
+  <script src="/static/table-utils.js?v=3"></script>
   <script>
     function gwEsc(s) {
       if (s == null || s === '') return '';
@@ -145,6 +149,149 @@
     var COL_SPAN = 28;
     var taxasPage = 1;
     var taxasLastPag = {};
+    var taxasMatrix = [];
+    var taxasSortCol = null;
+    var taxasSortAsc = true;
+    var TAXAS_HEADERS = [
+      'Produtor', 'E-mail',
+      'PIX Var %', 'PIX Fixo', 'PIX Ret %', 'PIX Dias',
+      'Cartão Var %', 'Cartão Fixo', 'Cartão Ret %', 'Cartão Dias', 'Cartão 6x %', 'Cartão 6x R$', 'Cartão 12x %', 'Cartão 12x R$',
+      'Boleto Var %', 'Boleto Fixo', 'Boleto Ret %', 'Boleto Dias',
+      'Saque Var %', 'Saque Fixo', 'Saque Mín.', 'Saque Ret %', 'Saque Dias',
+      'Crypto Var %', 'Crypto Fixo', 'Crypto Ret %', 'Crypto Dias',
+      'Total vendas (API)',
+    ];
+    var taxasItems = [];
+    function nn(x) {
+      if (x == null || x === '') return NaN;
+      var n = Number(x);
+      return isNaN(n) ? NaN : n;
+    }
+    /** Uma linha de valores comparáveis (28 colunas), alinhada a data-col="0"…"27". */
+    function taxasRawRow(p) {
+      var tx = p.taxes || {};
+      var px = tx.pix || {};
+      var cd = tx.card || {};
+      var bl = tx.boleto || {};
+      var w = tx.withdraw || {};
+      var cr = tx.crypto || {};
+      var tot = p.totals || {};
+      return [
+        ((p.displayName || p.name || '') + '').toLowerCase(),
+        ((p.email || '') + '').toLowerCase(),
+        nn(px.percentage),
+        nn(px.fixed),
+        nn(px.fundLockPercentage),
+        nn(px.fundLockDays),
+        nn(cd.percentage),
+        nn(cd.fixed),
+        nn(cd.fundLockPercentage),
+        nn(cd.fundLockDays),
+        nn(cd.installments6Percent),
+        nn(cd.installments6Fixed),
+        nn(cd.installments12Percent),
+        nn(cd.installments12Fixed),
+        nn(bl.percentage),
+        nn(bl.fixed),
+        nn(bl.fundLockPercentage),
+        nn(bl.fundLockDays),
+        nn(w.percentage),
+        nn(w.fixed),
+        nn(w.minimumFee),
+        nn(w.fundLockPercentage),
+        nn(w.fundLockDays),
+        nn(cr.percentage),
+        nn(cr.fixed),
+        nn(cr.fundLockPercentage),
+        nn(cr.fundLockDays),
+        nn(tot.sold),
+      ];
+    }
+    function trForTaxItem(p) {
+      var nome = gwEsc(p.displayName || p.name || '–');
+      var em = gwEsc(p.email || '–');
+      var tx = p.taxes || {};
+      var px = tx.pix || {};
+      var cd = tx.card || {};
+      var bl = tx.boleto || {};
+      var w = tx.withdraw || {};
+      var cr = tx.crypto || {};
+      var tot = p.totals || {};
+      return (
+        '<tr>' +
+        '<td>' + nome + '</td>' +
+        '<td><code style="font-size:0.85em;">' + em + '</code></td>' +
+        '<td class="num tax-cell">' + gwEsc(taxPct(px)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxFixed(px)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxRetPct(px)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxRetDays(px)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxPct(cd)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxFixed(cd)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxRetPct(cd)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxRetDays(cd)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(cardInstPct(cd, 6)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(cardInstFixed(cd, 6)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(cardInstPct(cd, 12)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(cardInstFixed(cd, 12)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxPct(bl)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxFixed(bl)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxRetPct(bl)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxRetDays(bl)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxPct(w)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxFixed(w)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxMin(w)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxRetPct(w)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxRetDays(w)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxPct(cr)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxFixed(cr)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxRetPct(cr)) + '</td>' +
+        '<td class="num tax-cell">' + gwEsc(taxRetDays(cr)) + '</td>' +
+        '<td class="num">' + fmtBRL(tot.sold) + '</td>' +
+        '</tr>'
+      );
+    }
+    function taxasSortedOrder() {
+      var n = taxasMatrix.length;
+      var idx = [];
+      for (var i = 0; i < n; i++) idx.push(i);
+      if (taxasSortCol == null) return idx;
+      var c = parseInt(taxasSortCol, 10);
+      var asc = taxasSortAsc;
+      var mult = asc ? 1 : -1;
+      var typEl = document.querySelector('#taxasTable th[data-col="' + c + '"]');
+      var ttyp = typEl ? typEl.getAttribute('data-type') : 'num';
+      idx.sort(function (ia, ib) {
+        var ra = taxasMatrix[ia];
+        var rb = taxasMatrix[ib];
+        var va = ra[c];
+        var vb = rb[c];
+        if (ttyp === 'text') {
+          va = (va || '').toString().toLowerCase();
+          vb = (vb || '').toString().toLowerCase();
+          return mult * va.localeCompare(vb, 'pt-BR');
+        }
+        if (isNaN(va) && isNaN(vb)) return 0;
+        if (isNaN(va)) return mult * 1;
+        if (isNaN(vb)) return mult * -1;
+        return mult * (va - vb);
+      });
+      return idx;
+    }
+    function renderTaxasTbody() {
+      var tbody = document.getElementById('taxasTbody');
+      var order = taxasSortedOrder();
+      tbody.innerHTML = order
+        .map(function (ix) {
+          return trForTaxItem(taxasItems[ix]);
+        })
+        .join('');
+      document.querySelectorAll('#taxasTable th[data-col]').forEach(function (th) {
+        var dc = th.getAttribute('data-col');
+        th.classList.toggle('sorted', dc === String(taxasSortCol));
+        var icon = th.querySelector('.sort-icon');
+        if (icon) icon.textContent = dc === String(taxasSortCol) ? (taxasSortAsc ? '↑' : '↓') : '↕';
+      });
+    }
 
     function buildTaxasQuery() {
       var params = new URLSearchParams();
@@ -201,55 +348,23 @@
           var pag = d.pagination || {};
           taxasLastPag = pag;
           var items = d.items || [];
+          taxasSortCol = null;
+          taxasSortAsc = true;
           msg.textContent =
             'Página ' + (pag.page != null ? pag.page : taxasPage) + ' / ' + (pag.totalPages != null ? pag.totalPages : '?') +
             ' — ' + (pag.count != null ? pag.count : '?') + ' produtor(es).';
           if (!items.length) {
+            taxasItems = [];
+            taxasMatrix = [];
             tbody.innerHTML = '<tr><td colspan="' + COL_SPAN + '" class="empty">Nenhum resultado.</td></tr>';
             setNavButtons();
             return;
           }
-          tbody.innerHTML = items.map(function (p) {
-            var nome = gwEsc(p.displayName || p.name || '–');
-            var em = gwEsc(p.email || '–');
-            var tx = p.taxes || {};
-            var px = tx.pix || {};
-            var cd = tx.card || {};
-            var bl = tx.boleto || {};
-            var w = tx.withdraw || {};
-            var cr = tx.crypto || {};
-            var tot = p.totals || {};
-            return '<tr>' +
-              '<td>' + nome + '</td>' +
-              '<td><code style="font-size:0.85em;">' + em + '</code></td>' +
-              '<td class="num tax-cell">' + gwEsc(taxPct(px)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxFixed(px)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxRetPct(px)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxRetDays(px)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxPct(cd)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxFixed(cd)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxRetPct(cd)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxRetDays(cd)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(cardInstPct(cd, 6)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(cardInstFixed(cd, 6)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(cardInstPct(cd, 12)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(cardInstFixed(cd, 12)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxPct(bl)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxFixed(bl)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxRetPct(bl)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxRetDays(bl)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxPct(w)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxFixed(w)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxMin(w)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxRetPct(w)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxRetDays(w)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxPct(cr)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxFixed(cr)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxRetPct(cr)) + '</td>' +
-              '<td class="num tax-cell">' + gwEsc(taxRetDays(cr)) + '</td>' +
-              '<td class="num">' + fmtBRL(tot.sold) + '</td>' +
-              '</tr>';
-          }).join('');
+          taxasItems = items.slice();
+          taxasMatrix = items.map(function (p) {
+            return taxasRawRow(p);
+          });
+          renderTaxasTbody();
           setNavButtons();
         })
         .catch(function (e) {
@@ -267,6 +382,36 @@
     });
     document.getElementById('taxasBusca').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') { e.preventDefault(); taxasPage = 1; loadTaxas(); }
+    });
+    document.getElementById('taxasTable').querySelector('thead').addEventListener('click', function (e) {
+      var th = e.target.closest('th[data-col]');
+      if (!th) return;
+      var col = th.getAttribute('data-col');
+      if (taxasSortCol === col) taxasSortAsc = !taxasSortAsc;
+      else {
+        taxasSortCol = col;
+        taxasSortAsc = ApplyfyTable.firstSortAsc(th.getAttribute("data-type") || "num");
+      }
+      renderTaxasTbody();
+    });
+    function exportTaxasVista() {
+      if (!taxasItems.length) return null;
+      var order = taxasSortedOrder();
+      var rows = order.map(function (ix) {
+        var r = taxasMatrix[ix];
+        return [
+          taxasItems[ix].displayName || taxasItems[ix].name || '',
+          taxasItems[ix].email || '',
+        ].concat(r.slice(2).map(function (cell) {
+          return isNaN(cell) ? '' : cell;
+        }));
+      });
+      return { headers: TAXAS_HEADERS.slice(), rows: rows };
+    }
+    document.getElementById('btnTaxasXlsx').addEventListener('click', function () {
+      var o = exportTaxasVista();
+      if (!o || !o.rows.length) return;
+      ApplyfyTable.exportXLSX(o.headers, o.rows, 'taxas_vista.xlsx', 'Taxas');
     });
     loadTaxas();
   </script>

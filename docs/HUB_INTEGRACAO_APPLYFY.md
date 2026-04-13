@@ -157,7 +157,7 @@ Rotas públicas (sem JWT de utilizador): `/health`, `/api/health`, `/api/webhook
 |-----------|--------|
 | `applyfy.painel` | Painel geral, relatórios, vendas, transações, meta, comercial, produtores, logs de saldo, APIs correspondentes |
 | `applyfy.financeiro` | `/financeiro` e `/api/financeiro/*` |
-| `applyfy.jobs` | `/integracoes` e `/api/job*`, `/api/job-vendas*` |
+| `applyfy.jobs` | `/api/job*`, `/api/job-vendas*` (jobs e export Playwright; sem ecrã dedicado no painel) |
 | `applyfy.admin` | Rotas `/api/admin/*` (alternativa ao header `APPLYFY_ADMIN_TOKEN`) + bypass de checks quando em conjunto com as outras |
 
 Utilizador com `applyfy.admin` na lista é tratado como acesso amplo às permissões (atalho no código).

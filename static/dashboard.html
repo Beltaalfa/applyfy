@@ -1,0 +1,1003 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
+  <link rel="icon" href="/static/logo/Icone.png?v=2" type="image/png">
+  <link rel="apple-touch-icon" href="/static/logo/Icone.png?v=2">
+  <title>Dashboard executivo | Applyfy</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/painel-theme.css?v=gold22">
+  <style>
+    .dash-lead { color: var(--zinc-400); font-size: 0.92rem; max-width: 42rem; margin: 0 0 1rem; line-height: 1.5; }
+    .dash-kpi-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(12.5rem, 1fr)); gap: 0.85rem; margin-bottom: 1rem; }
+    .dash-kpi {
+      position: relative;
+      border-radius: 10px;
+      padding: 1rem 1rem 1rem 1.15rem;
+      border: 1px solid rgba(63, 63, 70, 0.85);
+      overflow: hidden;
+    }
+    .dash-kpi::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      border-radius: 2px 0 0 2px;
+    }
+    .dash-kpi label { display: block; font-size: 0.72rem; font-weight: 600; margin-bottom: 0.35rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    .dash-kpi .val { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.2; }
+    .dash-kpi .sub { font-size: 0.78rem; margin-top: 0.4rem; line-height: 1.35; opacity: 0.92; }
+    .dash-kpi .dash-kpi-sub2 { margin-top: 0.3rem; opacity: 0.88; font-size: 0.76rem; }
+    /* Vendas */
+    .dash-kpi--amber { background: linear-gradient(145deg, rgba(245, 158, 11, 0.14) 0%, rgba(24, 24, 27, 0.92) 48%); border-color: rgba(245, 158, 11, 0.35); }
+    .dash-kpi--amber::before { background: linear-gradient(180deg, #fbbf24, #d97706); }
+    .dash-kpi--amber label { color: #fcd34d; }
+    .dash-kpi--amber .val { color: #fffbeb; text-shadow: 0 0 24px rgba(251, 191, 36, 0.25); }
+    .dash-kpi--amber .sub { color: rgba(254, 243, 199, 0.75); }
+    /* Chargeback */
+    .dash-kpi--rose { background: linear-gradient(145deg, rgba(244, 63, 94, 0.12) 0%, rgba(24, 24, 27, 0.92) 48%); border-color: rgba(244, 63, 94, 0.32); }
+    .dash-kpi--rose::before { background: linear-gradient(180deg, #fb7185, #e11d48); }
+    .dash-kpi--rose label { color: #fda4af; }
+    .dash-kpi--rose .val { color: #fff1f2; text-shadow: 0 0 24px rgba(251, 113, 133, 0.2); }
+    .dash-kpi--rose .sub { color: rgba(255, 228, 230, 0.75); }
+    /* Saldo disponível */
+    .dash-kpi--emerald { background: linear-gradient(145deg, rgba(16, 185, 129, 0.12) 0%, rgba(24, 24, 27, 0.92) 48%); border-color: rgba(16, 185, 129, 0.3); }
+    .dash-kpi--emerald::before { background: linear-gradient(180deg, #34d399, #059669); }
+    .dash-kpi--emerald label { color: #6ee7b7; }
+    .dash-kpi--emerald .val { color: #ecfdf5; text-shadow: 0 0 24px rgba(52, 211, 153, 0.2); }
+    .dash-kpi--emerald .sub { color: rgba(209, 250, 229, 0.78); }
+    /* Meta */
+    .dash-kpi--violet { background: linear-gradient(145deg, rgba(139, 92, 246, 0.14) 0%, rgba(24, 24, 27, 0.92) 48%); border-color: rgba(139, 92, 246, 0.35); }
+    .dash-kpi--violet::before { background: linear-gradient(180deg, #a78bfa, #7c3aed); }
+    .dash-kpi--violet label { color: #c4b5fd; }
+    .dash-kpi--violet .val { color: #f5f3ff; text-shadow: 0 0 24px rgba(167, 139, 250, 0.22); }
+    .dash-kpi--violet .sub { color: rgba(237, 233, 254, 0.8); }
+    /* Ticket médio */
+    .dash-kpi--cyan { background: linear-gradient(145deg, rgba(6, 182, 212, 0.14) 0%, rgba(24, 24, 27, 0.92) 48%); border-color: rgba(6, 182, 212, 0.35); }
+    .dash-kpi--cyan::before { background: linear-gradient(180deg, #22d3ee, #0891b2); }
+    .dash-kpi--cyan label { color: #a5f3fc; }
+    .dash-kpi--cyan .val { color: #ecfeff; text-shadow: 0 0 24px rgba(34, 211, 238, 0.22); }
+    .dash-kpi--cyan .sub { color: rgba(207, 250, 254, 0.78); }
+    .dash-section { margin-top: 1.25rem; }
+    .dash-section h2 { font-size: 1rem; font-weight: 600; margin: 0 0 0.75rem; color: var(--zinc-200); }
+    .dash-chart-wrap { height: min(300px, 45vh); position: relative; margin-top: 0.5rem; }
+    .dash-adq-layout,
+    .dash-met-layout { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.1fr); gap: 1.25rem; align-items: start; }
+    @media (max-width: 900px) {
+      .dash-adq-layout,
+      .dash-met-layout { grid-template-columns: 1fr; }
+    }
+    .dash-chart-donut-wrap { max-width: 400px; margin: 0 auto; height: min(300px, 42vh); position: relative; }
+    .dash-chart-bar-wrap { height: min(420px, 58vh); position: relative; margin-top: 0.5rem; }
+    .dash-hint { font-size: 0.85rem; color: var(--zinc-500); margin: 0.5rem 0 0; padding: 0.65rem 0.85rem; background: rgba(234, 179, 8, 0.08); border: 1px solid rgba(234, 179, 8, 0.25); border-radius: 8px; }
+    .table-wrap.flat .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .dash-loading { color: var(--zinc-500); }
+    .dash-b-sub { font-size: 0.82rem; color: var(--zinc-500); margin: 0 0 0.65rem; line-height: 1.45; }
+  </style>
+</head>
+<body data-active="/dashboard">
+  <div class="app-shell" id="app-shell">
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
+      <img src="/static/logo/Icone.png?v=2" alt="" class="sidebar-toggle__icon" decoding="async" />
+    </button>
+    <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
+    <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
+    <div class="main-column">
+      <header class="top-bar">
+        <div class="top-bar-inner">
+          <h1 class="page-title">Dashboard</h1>
+        </div>
+      </header>
+      <main class="main-content wide">
+        <p class="dash-lead">Todos os blocos abaixo usam a mesma resposta de <code>/api/dashboard</code> e o intervalo de datas escolhido (vendas: data de referência = venda, ou pagamento, liberação ou atualização quando a data de venda vem vazia).</p>
+
+        <div class="filtro" style="flex-wrap:wrap;align-items:center;gap:0.75rem;margin-bottom:1rem;">
+          <label for="dashFrom">De:</label>
+          <input type="date" id="dashFrom">
+          <label for="dashTo">Até:</label>
+          <input type="date" id="dashTo">
+          <button type="button" class="btn btn-secondary" data-preset="7">7 dias</button>
+          <button type="button" class="btn btn-secondary" data-preset="30">30 dias</button>
+          <button type="button" class="btn btn-secondary" data-preset="90">90 dias</button>
+          <button type="button" class="btn btn-primary" id="dashApply">Atualizar</button>
+        </div>
+
+        <p id="dashPeriodEcho" class="text-muted" style="margin:0 0 0.75rem;font-size:0.88rem;display:none;"></p>
+
+        <p id="dashMsg" class="dash-loading">A carregar…</p>
+        <div id="dashHints"></div>
+
+        <div class="dash-kpi-grid" id="dashKpis" style="display:none;"></div>
+
+        <div class="card card-padded dash-section">
+          <h2>Quem mais vendeu</h2>
+          <p class="text-muted" id="dashRunAt" style="margin:0 0 0.75rem;font-size:0.88rem;"></p>
+          <p class="text-muted" id="dashConc" style="margin:0 0 0.75rem;font-size:0.88rem;"></p>
+          <p class="dash-b-sub">Ordenação: maiores totais de vendas pela API no período selecionado acima (mesma base que «Total vendas (API)» em outras páginas).</p>
+          <div class="table-wrap flat">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Produtor</th>
+                  <th class="num">Total vendas (API)</th>
+                </tr>
+              </thead>
+              <tbody id="dashRankVendasBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card card-padded dash-section">
+          <h2>Maiores chargebacks</h2>
+          <p class="dash-b-sub" id="dashCbPeriodNote"></p>
+          <div class="table-wrap flat">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Produtor</th>
+                  <th class="num">Chargeback</th>
+                </tr>
+              </thead>
+              <tbody id="dashRankCbBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card card-padded dash-section">
+          <h2>Métodos de pagamento</h2>
+          <p class="dash-b-sub" id="dashMetSectionLead">Valor líquido e participação por método (vendas importadas). À direita: só vendas em cartão, repartidas por número de parcelas — % em relação ao total em cartão e % em relação ao geral.</p>
+          <p id="dashMetEmpty" class="text-muted" style="display: none; margin: 0 0 0.75rem;">Não há vendas com método de pagamento registado neste período.</p>
+          <div class="dash-met-layout" id="dashMetLayout">
+            <div>
+              <h3 style="font-size:0.9rem;font-weight:600;margin:0 0 0.5rem;color:var(--zinc-400);">Por método</h3>
+              <div class="dash-chart-donut-wrap">
+                <canvas id="chartMetodo"></canvas>
+              </div>
+              <div class="table-wrap flat" style="margin-top:0.75rem;">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Método</th>
+                      <th class="num">Valor líq.</th>
+                      <th class="num">% total</th>
+                      <th class="num">Trans.</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dashMetTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+            <div id="dashParcCol">
+              <h3 style="font-size:0.9rem;font-weight:600;margin:0 0 0.5rem;color:var(--zinc-400);">Cartão — parcelas</h3>
+              <p id="dashParcEmpty" class="text-muted" style="display: none; margin: 0 0 0.5rem; font-size: 0.85rem;">Sem vendas em cartão neste período (ou parcelas não registadas).</p>
+              <div class="dash-chart-donut-wrap" id="dashParcChartWrap">
+                <canvas id="chartCartaoParc"></canvas>
+              </div>
+              <div class="table-wrap flat" style="margin-top:0.75rem;" id="dashParcTableWrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Parcelas</th>
+                      <th class="num">Valor</th>
+                      <th class="num">% cartão</th>
+                      <th class="num">% total</th>
+                      <th class="num">Trans.</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dashParcTableBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-padded dash-section">
+          <h2>Descrição de erro (transações)</h2>
+          <p class="dash-b-sub">Distribuição das mensagens registadas nas tentativas de pagamento com descrição (importação de vendas). O percentual refere-se ao total de registos com mensagem no período.</p>
+          <p id="dashErrEmpty" class="text-muted" style="display: none; margin: 0 0 0.75rem;">Nenhuma descrição de erro ou mensagem de tentativa neste período.</p>
+          <p id="dashErrSource" class="text-muted" style="margin: 0 0 0.5rem; font-size: 0.8rem;"></p>
+          <div class="dash-chart-bar-wrap" id="dashErrWrap">
+            <canvas id="chartErros"></canvas>
+          </div>
+        </div>
+
+        <div class="card card-padded dash-section">
+          <h2>Vendas por adquirente</h2>
+          <p class="dash-b-sub" id="dashAdqSectionLead">Valor líquido no período por adquirente (vendas importadas da API Applyfy). O gráfico mostra a participação de cada um no total do período.</p>
+          <p id="dashAdqEmpty" class="text-muted" style="display: none; margin: 0 0 0.75rem;">Não há vendas com adquirente registadas neste período.</p>
+          <div class="dash-adq-layout" id="dashAdqLayout">
+            <div class="dash-chart-donut-wrap">
+              <canvas id="chartAdq"></canvas>
+            </div>
+            <div class="table-wrap flat">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Adquirente</th>
+                    <th class="num">Valor líq.</th>
+                    <th class="num">% do total</th>
+                    <th class="num">Transações</th>
+                  </tr>
+                </thead>
+                <tbody id="dashAdqTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="card card-padded dash-section">
+          <h2>Ticket médio por dia</h2>
+          <p class="dash-b-sub" id="dashTmBlurb">Valor líquido do produtor por venda, por data de venda (importação). Dias sem vendas não entram na linha (intervalo no gráfico).</p>
+          <p id="dashTmEmpty" class="text-muted" style="display: none; margin: 0 0 0.75rem;">Não há vendas com data no período para calcular o ticket médio.</p>
+          <div class="dash-chart-wrap" id="dashTmWrap"><canvas id="chartTicketMedio"></canvas></div>
+        </div>
+
+        <div class="card card-padded dash-section">
+          <h2>Vendas e chargebacks por dia</h2>
+          <p class="text-muted" style="margin:0 0 0.5rem;font-size:0.85rem;">Mesmo período selecionado acima.</p>
+          <div class="dash-chart-wrap"><canvas id="chartTx"></canvas></div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <script src="/static/painel-shell.js?v=28" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+(function () {
+  var chartTx;
+  var chartAdq;
+  var chartMet;
+  var chartParc;
+  var chartErros;
+  var chartTicketMedio;
+  var ADQ_COLORS = [
+    '#d4a012', '#3b82f6', '#22c55e', '#a855f7', '#f97316', '#14b8a6', '#ec4899',
+    '#64748b', '#eab308', '#ef4444', '#06b6d4', '#84cc16', '#f472b6'
+  ];
+
+  function fmtMoney(n) {
+    var x = Number(n) || 0;
+    return x.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  /** ISO datetime → texto legível (pt) */
+  function fmtRunAt(iso) {
+    if (!iso || typeof iso !== 'string') return '';
+    var m = iso.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+    if (m) return m[3] + '/' + m[2] + '/' + m[1] + ' às ' + m[4] + ':' + m[5];
+    return iso.replace('T', ' ').slice(0, 16);
+  }
+
+  /** YYYY-MM-DD → dd/mm/aaaa */
+  function fmtIsoDateBr(s) {
+    if (!s || typeof s !== 'string' || s.length < 10) return '—';
+    var p = s.slice(0, 10).split('-');
+    if (p.length !== 3) return s;
+    return p[2] + '/' + p[1] + '/' + p[0];
+  }
+
+  /**
+   * Data local YYYY-MM-DD (não usar Date#toISOString() para inputs type=date:
+   * ISOString é UTC e desloca o dia em fusos como America/Sao_Paulo).
+   */
+  function toISODateLocal(d) {
+    var y = d.getFullYear();
+    var m = ('0' + (d.getMonth() + 1)).slice(-2);
+    var day = ('0' + d.getDate()).slice(-2);
+    return y + '-' + m + '-' + day;
+  }
+
+  function setDates(from, to) {
+    document.getElementById('dashFrom').value = from;
+    document.getElementById('dashTo').value = to;
+  }
+
+  function defaultRange() {
+    var to = new Date();
+    var from = new Date(to);
+    from.setDate(from.getDate() - 30);
+    setDates(toISODateLocal(from), toISODateLocal(to));
+  }
+
+  function destroyChart(ch) {
+    if (ch && typeof ch.destroy === 'function') ch.destroy();
+  }
+
+  function load() {
+    var fromEl = document.getElementById('dashFrom');
+    var toEl = document.getElementById('dashTo');
+    var from = (fromEl && fromEl.value) ? fromEl.value.trim() : '';
+    var to = (toEl && toEl.value) ? toEl.value.trim() : '';
+    if (!from || !to || from.length < 10 || to.length < 10) {
+      defaultRange();
+      from = fromEl.value.trim();
+      to = toEl.value.trim();
+    }
+    var msg = document.getElementById('dashMsg');
+    msg.textContent = 'A carregar…';
+    msg.className = 'dash-loading';
+    fetch('/api/dashboard?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to), { credentials: 'same-origin' })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (x) {
+        if (!x.ok) {
+          msg.textContent = x.j.error || ('Erro HTTP ' + x.j);
+          msg.style.color = 'var(--danger, #f87171)';
+          return;
+        }
+        msg.textContent = '';
+        msg.style.color = '';
+        var pe = document.getElementById('dashPeriodEcho');
+        if (pe && x.j && x.j.period) {
+          pe.style.display = 'block';
+          pe.textContent =
+            'Período ativo nos gráficos e tabelas: ' +
+            fmtIsoDateBr(x.j.period.from) +
+            ' a ' +
+            fmtIsoDateBr(x.j.period.to) +
+            '.';
+        } else if (pe) {
+          pe.style.display = 'none';
+        }
+        render(x.j);
+      })
+      .catch(function () {
+        msg.textContent = 'Falha de rede.';
+        msg.style.color = 'var(--danger, #f87171)';
+      });
+  }
+
+  function render(d) {
+    var hints = document.getElementById('dashHints');
+    hints.innerHTML = '';
+    (d.empty_hints || []).forEach(function (h, idx) {
+      var p = document.createElement('p');
+      p.className = 'dash-hint';
+      if (d.carteira_comercial_sem_produtores && idx === 0) {
+        p.style.borderColor = 'rgba(248, 113, 113, 0.45)';
+        p.style.background = 'rgba(248, 113, 113, 0.08)';
+      }
+      p.textContent = h;
+      hints.appendChild(p);
+    });
+
+    var maSrc = d.chart_metodos_adquirentes_source || 'applyfy_vendas';
+    var metLead = document.getElementById('dashMetSectionLead');
+    if (metLead) {
+      metLead.textContent =
+        maSrc === 'tx_facts_webhooks'
+          ? 'Valor líquido por método a partir de vendas_net nos factos + método no último webhook por transação. À direita, parcelas em cartão continuam só com importação de encomendas.'
+          : maSrc === 'tx_facts_meta'
+            ? 'Valor líquido por método a partir do campo payment_method nos factos (sync/API). À direita, parcelas em cartão continuam só com importação de encomendas.'
+          : 'Valor líquido e participação por método (vendas importadas). À direita: só vendas em cartão, repartidas por número de parcelas — % em relação ao total em cartão e % em relação ao geral.';
+    }
+    var adqLead = document.getElementById('dashAdqSectionLead');
+    if (adqLead) {
+      adqLead.textContent =
+        maSrc === 'tx_facts_webhooks'
+          ? 'Valor líquido por adquirente a partir dos factos + payload de webhook (último por transação).'
+          : maSrc === 'tx_facts_meta'
+            ? 'Valor líquido no período por adquirente a partir do campo acquirer nos factos (sync/API Applyfy). O gráfico mostra a participação de cada um no total do período.'
+          : 'Valor líquido no período por adquirente (vendas importadas da API Applyfy). O gráfico mostra a participação de cada um no total do período.';
+    }
+
+    var kpis = document.getElementById('dashKpis');
+    kpis.style.display = 'grid';
+    var txT = (d.tx_facts && d.tx_facts.totais_periodo) ? d.tx_facts.totais_periodo : {};
+    var rkV = d.ranking_vendas_snapshot || {};
+    var rkCb = d.ranking_chargeback_period || {};
+    var totSnap = rkV.totals || {};
+    var nMetaOk = Number(d.produtores_atingiram_meta);
+    if (isNaN(nMetaOk)) nMetaOk = 0;
+    var tmP = d.ticket_medio && d.ticket_medio.periodo ? d.ticket_medio.periodo : {};
+    var tmSrc = d.ticket_medio_source || 'applyfy_vendas';
+    var tmKpi =
+      tmP.ticket_medio != null && !isNaN(Number(tmP.ticket_medio))
+        ? 'R$ ' + fmtMoney(tmP.ticket_medio)
+        : '—';
+    var tmSub =
+      tmP.vendas_count != null && Number(tmP.vendas_count) > 0
+        ? tmSrc === 'tx_facts'
+          ? 'Vendas líquidas (API) ÷ ' + tmP.vendas_count + ' transação(ões) no período'
+          : 'Líquido ÷ ' + tmP.vendas_count + ' venda(s) no período'
+        : 'Sem dados no período para o ticket médio';
+    var tmBaseSub2 =
+      tmSrc === 'tx_facts'
+        ? 'Base: factos de transacções (API / webhooks) · período global (todos os produtores)'
+        : 'Base: vendas importadas · período global (todos os produtores)';
+    kpis.innerHTML =
+      '<div class="dash-kpi dash-kpi--amber"><label>Vendas no período</label><div class="val">R$ ' + fmtMoney(txT.vendas_net) + '</div><div class="sub">Total no intervalo selecionado</div></div>' +
+      '<div class="dash-kpi dash-kpi--rose"><label>Chargebacks no período</label><div class="val">R$ ' + fmtMoney(txT.chargeback) + '</div><div class="sub">Total no intervalo selecionado</div></div>' +
+      '<div class="dash-kpi dash-kpi--emerald"><label>Saldo disponível</label><div class="val">R$ ' + fmtMoney(totSnap.disponivel_sum) + '</div><div class="sub">Último relatório · ' + (totSnap.count || 0) + ' produtores</div></div>' +
+      '<div class="dash-kpi dash-kpi--violet"><label>Produtores na meta</label><div class="val">' + nMetaOk + '</div><div class="sub">Vendas no período ≥ valor da meta</div><div class="sub dash-kpi-sub2">Meta: R$ ' + fmtMoney(d.meta_global) + '</div></div>' +
+      '<div class="dash-kpi dash-kpi--cyan"><label>Ticket médio (período)</label><div class="val">' +
+      tmKpi +
+      '</div><div class="sub">' +
+      tmSub +
+      '</div><div class="sub dash-kpi-sub2">' +
+      tmBaseSub2 +
+      '</div></div>';
+    var tmBlurb = document.getElementById('dashTmBlurb');
+    if (tmBlurb) {
+      tmBlurb.textContent =
+        tmSrc === 'tx_facts'
+          ? 'Média de vendas líquidas por transação por dia (sincronização API / webhooks), sempre no período escolhido e para todos os produtores. Método de pagamento, adquirente e erros só vêm da importação de encomendas (applyfy_vendas).'
+          : 'Valor líquido do produtor por venda por data (importação), no período e para todos os produtores. Dias sem venda não entram na linha.';
+    }
+    document.getElementById('dashRunAt').textContent = rkV.run_at
+      ? ('Última atualização dos saldos: ' + fmtRunAt(rkV.run_at))
+      : 'Ainda não há saldos exportados.';
+    var tot = totSnap;
+    document.getElementById('dashConc').textContent = tot.count
+      ? ('Estes 15 concentram ' +
+          (tot.concentration_top_n_vendas_pct || 0) +
+          '% do total de vendas (API) no período. Último relatório de saldos: ' +
+          (tot.count || 0) +
+          ' produtor(es).')
+      : '';
+    var perCb = rkCb.period || {};
+    document.getElementById('dashCbPeriodNote').textContent =
+      'Período ' + (perCb.from || '—') + ' a ' + (perCb.to || '—') + '. Chargeback acumulado no top 15: R$ ' + fmtMoney(rkCb.chargeback_top_sum) + '.';
+
+    var tbodyV = document.getElementById('dashRankVendasBody');
+    tbodyV.innerHTML = '';
+    (rkV.rows || []).forEach(function (row, i) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' +
+        (i + 1) +
+        '</td><td>' +
+        escapeHtml(row.nome || row.email) +
+        '</td><td class="num">R$ ' +
+        fmtMoney(row.vendas_api != null ? row.vendas_api : row.vendas_liquidas) +
+        '</td>';
+      tbodyV.appendChild(tr);
+    });
+    if (!(rkV.rows || []).length) {
+      tbodyV.innerHTML = '<tr><td colspan="3" class="empty">Sem dados.</td></tr>';
+    }
+
+    var tbodyCb = document.getElementById('dashRankCbBody');
+    tbodyCb.innerHTML = '';
+    (rkCb.rows || []).forEach(function (row, i) {
+      var tr = document.createElement('tr');
+      tr.innerHTML =
+        '<td>' +
+        (i + 1) +
+        '</td><td>' +
+        escapeHtml(row.nome || row.email) +
+        '</td><td class="num">R$ ' +
+        fmtMoney(row.chargeback) +
+        '</td>';
+      tbodyCb.appendChild(tr);
+    });
+    if (!(rkCb.rows || []).length) {
+      tbodyCb.innerHTML = '<tr><td colspan="3" class="empty">Sem chargeback neste período.</td></tr>';
+    }
+
+    destroyChart(chartTx);
+    destroyChart(chartAdq);
+    destroyChart(chartMet);
+    destroyChart(chartParc);
+    destroyChart(chartErros);
+    destroyChart(chartTicketMedio);
+
+    var cmp = d.chart_metodos_pagamento || {};
+    var metRows = cmp.metodos && cmp.metodos.rows ? cmp.metodos.rows : [];
+    var parcRows = cmp.cartao_parcelas && cmp.cartao_parcelas.rows ? cmp.cartao_parcelas.rows : [];
+    var metEmpty = document.getElementById('dashMetEmpty');
+    var metLayout = document.getElementById('dashMetLayout');
+    var tbodyMet = document.getElementById('dashMetTableBody');
+    var parcEmpty = document.getElementById('dashParcEmpty');
+    var parcChartWrap = document.getElementById('dashParcChartWrap');
+    var parcTableWrap = document.getElementById('dashParcTableWrap');
+    tbodyMet.innerHTML = '';
+    document.getElementById('dashParcTableBody').innerHTML = '';
+
+    if (!metRows.length && !parcRows.length) {
+      if (metEmpty) metEmpty.style.display = 'block';
+      if (metLayout) metLayout.style.display = 'none';
+    } else {
+      if (metEmpty) metEmpty.style.display = 'none';
+      if (metLayout) metLayout.style.display = '';
+    }
+    if (metRows.length) {
+      metRows.forEach(function (row) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' +
+          escapeHtml(row.label) +
+          '</td><td class="num">R$ ' +
+          fmtMoney(row.valor) +
+          '</td><td class="num">' +
+          (row.pct != null ? row.pct.toFixed(1) : '0') +
+          '%</td><td class="num">' +
+          (row.transacoes != null ? row.transacoes : '—') +
+          '</td>';
+        tbodyMet.appendChild(tr);
+      });
+      var ctxMet = document.getElementById('chartMetodo').getContext('2d');
+      var bgM = metRows.map(function (_, i) {
+        return ADQ_COLORS[(i + 3) % ADQ_COLORS.length];
+      });
+      chartMet = new Chart(ctxMet, {
+        type: 'doughnut',
+        data: {
+          labels: metRows.map(function (r) {
+            return r.label;
+          }),
+          datasets: [
+            {
+              data: metRows.map(function (r) {
+                return r.valor;
+              }),
+              backgroundColor: bgM,
+              borderColor: '#0a0a0a',
+              borderWidth: 2,
+              hoverOffset: 6
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '58%',
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { color: '#a1a1aa', padding: 10, usePointStyle: true, font: { size: 11 } }
+            },
+            tooltip: {
+              callbacks: {
+                label: function (ctx) {
+                  var r = metRows[ctx.dataIndex];
+                  if (!r) return '';
+                  return (
+                    ' R$ ' +
+                    fmtMoney(r.valor) +
+                    ' (' +
+                    (r.pct != null ? r.pct.toFixed(1) : '0') +
+                    '%) · ' +
+                    (r.transacoes != null ? r.transacoes : '0') +
+                    ' trans.'
+                  );
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    if (!parcRows.length) {
+      if (parcEmpty) parcEmpty.style.display = 'block';
+      if (parcChartWrap) parcChartWrap.style.display = 'none';
+      if (parcTableWrap) parcTableWrap.style.display = 'none';
+    } else {
+      if (parcEmpty) parcEmpty.style.display = 'none';
+      if (parcChartWrap) parcChartWrap.style.display = '';
+      if (parcTableWrap) parcTableWrap.style.display = '';
+      parcRows.forEach(function (row) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' +
+          escapeHtml(row.label) +
+          '</td><td class="num">R$ ' +
+          fmtMoney(row.valor) +
+          '</td><td class="num">' +
+          (row.pct_cartao != null ? row.pct_cartao.toFixed(1) : '0') +
+          '%</td><td class="num">' +
+          (row.pct_total != null ? row.pct_total.toFixed(1) : '0') +
+          '%</td><td class="num">' +
+          (row.transacoes != null ? row.transacoes : '—') +
+          '</td>';
+        document.getElementById('dashParcTableBody').appendChild(tr);
+      });
+      var ctxParc = document.getElementById('chartCartaoParc').getContext('2d');
+      var bgP = parcRows.map(function (_, i) {
+        return ADQ_COLORS[(i + 1) % ADQ_COLORS.length];
+      });
+      chartParc = new Chart(ctxParc, {
+        type: 'doughnut',
+        data: {
+          labels: parcRows.map(function (r) {
+            return r.label;
+          }),
+          datasets: [
+            {
+              data: parcRows.map(function (r) {
+                return r.valor;
+              }),
+              backgroundColor: bgP,
+              borderColor: '#0a0a0a',
+              borderWidth: 2,
+              hoverOffset: 6
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '58%',
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: { color: '#a1a1aa', padding: 8, usePointStyle: true, font: { size: 10 } }
+            },
+            tooltip: {
+              callbacks: {
+                label: function (ctx) {
+                  var r = parcRows[ctx.dataIndex];
+                  if (!r) return '';
+                  return (
+                    ' R$ ' +
+                    fmtMoney(r.valor) +
+                    ' · ' +
+                    (r.pct_cartao != null ? r.pct_cartao.toFixed(1) : '0') +
+                    '% do cartão · ' +
+                    (r.pct_total != null ? r.pct_total.toFixed(1) : '0') +
+                    '% do total · ' +
+                    (r.transacoes != null ? r.transacoes : '0') +
+                    ' trans.'
+                  );
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    var cerr = d.chart_erros_transacao || {};
+    var errRows = cerr.rows || [];
+    var errEmpty = document.getElementById('dashErrEmpty');
+    var errWrap = document.getElementById('dashErrWrap');
+    var errSource = document.getElementById('dashErrSource');
+    if (errSource) {
+      errSource.textContent =
+        cerr.source === 'transaction_attempts'
+          ? 'Fonte: tentativas de pagamento (detalhe por transação).'
+          : cerr.source === 'venda_tentativa_mensagem'
+            ? 'Fonte: mensagem resumida na linha da venda.'
+            : '';
+    }
+    if (!errRows.length) {
+      if (errEmpty) errEmpty.style.display = 'block';
+      if (errWrap) errWrap.style.display = 'none';
+    } else {
+      if (errEmpty) errEmpty.style.display = 'none';
+      if (errWrap) errWrap.style.display = '';
+      var shortLab = function (s) {
+        if (!s || typeof s !== 'string') return '';
+        return s.length > 44 ? s.slice(0, 42) + '…' : s;
+      };
+      var ctxErr = document.getElementById('chartErros').getContext('2d');
+      chartErros = new Chart(ctxErr, {
+        type: 'bar',
+        data: {
+          labels: errRows.map(function (r) {
+            return shortLab(r.label);
+          }),
+          datasets: [
+            {
+              label: 'Ocorrências',
+              data: errRows.map(function (r) {
+                return r.count;
+              }),
+              backgroundColor: 'rgba(251, 191, 36, 0.75)',
+              borderColor: 'rgba(245, 158, 11, 0.95)',
+              borderWidth: 1,
+              borderRadius: 4
+            }
+          ]
+        },
+        options: {
+          indexAxis: 'y',
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: function (items) {
+                  var i = items[0].dataIndex;
+                  return errRows[i] ? errRows[i].label : '';
+                },
+                label: function (ctx) {
+                  var i = ctx.dataIndex;
+                  var r = errRows[i];
+                  if (!r) return '';
+                  return (
+                    ' ' +
+                    r.count +
+                    ' ocorr. · ' +
+                    (r.pct != null ? r.pct.toFixed(1) : '0') +
+                    '% do total com mensagem'
+                  );
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              beginAtZero: true,
+              ticks: { color: '#71717a', precision: 0 },
+              grid: { color: 'rgba(63, 63, 70, 0.6)' }
+            },
+            y: {
+              ticks: { color: '#a1a1aa', font: { size: 11 } },
+              grid: { display: false }
+            }
+          }
+        }
+      });
+    }
+
+    var ca = d.chart_adquirentes || {};
+    var adqRows = ca.rows || [];
+    var tbodyAdq = document.getElementById('dashAdqTableBody');
+    var adqEmpty = document.getElementById('dashAdqEmpty');
+    var adqLayout = document.getElementById('dashAdqLayout');
+    tbodyAdq.innerHTML = '';
+    if (!adqRows.length) {
+      adqEmpty.style.display = 'block';
+      if (adqLayout) adqLayout.style.display = 'none';
+    } else {
+      adqEmpty.style.display = 'none';
+      if (adqLayout) adqLayout.style.display = '';
+      adqRows.forEach(function (row) {
+        var tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' +
+          escapeHtml(row.label) +
+          '</td><td class="num">R$ ' +
+          fmtMoney(row.valor) +
+          '</td><td class="num">' +
+          (row.pct != null ? row.pct.toFixed(1) : '0') +
+          '%</td><td class="num">' +
+          (row.transacoes != null ? row.transacoes : '—') +
+          '</td>';
+        tbodyAdq.appendChild(tr);
+      });
+      var ctxAdq = document.getElementById('chartAdq').getContext('2d');
+      var bg = adqRows.map(function (_, i) {
+        return ADQ_COLORS[i % ADQ_COLORS.length];
+      });
+      chartAdq = new Chart(ctxAdq, {
+        type: 'doughnut',
+        data: {
+          labels: adqRows.map(function (r) {
+            return r.label;
+          }),
+          datasets: [
+            {
+              data: adqRows.map(function (r) {
+                return r.valor;
+              }),
+              backgroundColor: bg,
+              borderColor: '#0a0a0a',
+              borderWidth: 2,
+              hoverOffset: 6
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '58%',
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: {
+                color: '#a1a1aa',
+                padding: 10,
+                usePointStyle: true,
+                font: { size: 11 }
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: function (ctx) {
+                  var r = adqRows[ctx.dataIndex];
+                  if (!r) return '';
+                  return (
+                    ' R$ ' +
+                    fmtMoney(r.valor) +
+                    ' (' +
+                    (r.pct != null ? r.pct.toFixed(1) : '0') +
+                    '%) · ' +
+                    (r.transacoes != null ? r.transacoes : '0') +
+                    ' trans.'
+                  );
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    var tmBundle = d.ticket_medio || {};
+    var serTm = tmBundle.serie_diaria || [];
+    var tmSrcChart = d.ticket_medio_source || 'applyfy_vendas';
+    var hasTm = serTm.some(function (x) {
+      return x && x.ticket_medio != null && !isNaN(Number(x.ticket_medio));
+    });
+    var tmEmpty = document.getElementById('dashTmEmpty');
+    var tmWrap = document.getElementById('dashTmWrap');
+    if (!hasTm) {
+      if (tmEmpty) tmEmpty.style.display = 'block';
+      if (tmWrap) tmWrap.style.display = 'none';
+    } else {
+      if (tmEmpty) tmEmpty.style.display = 'none';
+      if (tmWrap) tmWrap.style.display = '';
+      var ctxTm = document.getElementById('chartTicketMedio').getContext('2d');
+      chartTicketMedio = new Chart(ctxTm, {
+        type: 'line',
+        data: {
+          labels: serTm.map(function (s) {
+            return s.date;
+          }),
+          datasets: [
+            {
+              label: tmSrcChart === 'tx_facts' ? 'Ticket médio — transacções (API)' : 'Ticket médio (R$)',
+              data: serTm.map(function (s) {
+                return s.ticket_medio != null ? s.ticket_medio : null;
+              }),
+              borderColor: '#22d3ee',
+              backgroundColor: 'rgba(34, 211, 238, 0.12)',
+              tension: 0.25,
+              spanGaps: false,
+              fill: true,
+              pointRadius: 3,
+              pointHoverRadius: 5
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          plugins: {
+            legend: {
+              labels: {
+                color: '#d4d4d8',
+                usePointStyle: true,
+                padding: 16,
+                font: { size: 12, weight: '500' }
+              }
+            },
+            tooltip: {
+              callbacks: {
+                label: function (ctx) {
+                  var i = ctx.dataIndex;
+                  var row = serTm[i];
+                  if (!row || row.ticket_medio == null) {
+                    return tmSrcChart === 'tx_facts' ? ' Sem transação neste dia' : ' Sem venda neste dia';
+                  }
+                  if (tmSrcChart === 'tx_facts') {
+                    return (
+                      ' R$ ' +
+                      fmtMoney(row.ticket_medio) +
+                      ' · ' +
+                      row.vendas_count +
+                      ' transação(ões) em applyfy_tx_facts · líq. R$ ' +
+                      fmtMoney(row.valor_liquido_sum || 0)
+                    );
+                  }
+                  return (
+                    ' R$ ' +
+                    fmtMoney(row.ticket_medio) +
+                    ' · ' +
+                    row.vendas_count +
+                    ' venda(s) importada(s) · líq. R$ ' +
+                    fmtMoney(row.valor_liquido_sum || 0)
+                  );
+                }
+              }
+            }
+          },
+          scales: {
+            x: { ticks: { color: '#71717a', maxTicksLimit: 12 } },
+            y: {
+              ticks: {
+                color: '#71717a',
+                callback: function (v) {
+                  return 'R$ ' + fmtMoney(v);
+                }
+              }
+            }
+          }
+        }
+      });
+    }
+
+    var ctxTx = document.getElementById('chartTx').getContext('2d');
+    var ser = (d.tx_facts && d.tx_facts.serie_diaria) ? d.tx_facts.serie_diaria : [];
+    chartTx = new Chart(ctxTx, {
+      type: 'line',
+      data: {
+        labels: ser.map(function (s) { return s.date; }),
+        datasets: [
+          {
+            label: 'Vendas',
+            data: ser.map(function (s) { return s.vendas_net; }),
+            borderColor: '#fbbf24',
+            backgroundColor: 'rgba(251, 191, 36, 0.12)',
+            tension: 0.25,
+            fill: true
+          },
+          {
+            label: 'Chargebacks',
+            data: ser.map(function (s) { return s.chargeback; }),
+            borderColor: '#f43f5e',
+            backgroundColor: 'rgba(244, 63, 94, 0.1)',
+            tension: 0.25,
+            fill: true
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            labels: {
+              color: '#d4d4d8',
+              usePointStyle: true,
+              padding: 16,
+              font: { size: 12, weight: '500' }
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { color: '#71717a', maxTicksLimit: 12 } },
+          y: { ticks: { color: '#71717a' } }
+        }
+      }
+    });
+
+    if (d.filtro_comercial_ativo) {
+      var note = document.createElement('p');
+      note.className = 'dash-hint';
+      note.textContent = 'A mostrar apenas produtores da sua carteira comercial.';
+      hints.insertBefore(note, hints.firstChild);
+    }
+  }
+
+  function escapeHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  document.getElementById('dashApply').addEventListener('click', load);
+  document.querySelectorAll('[data-preset]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var days = parseInt(btn.getAttribute('data-preset'), 10) || 30;
+      var to = new Date();
+      var from = new Date(to);
+      from.setDate(from.getDate() - days);
+      setDates(toISODateLocal(from), toISODateLocal(to));
+      load();
+    });
+  });
+
+  defaultRange();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', load);
+  } else {
+    load();
+  }
+})();
+  </script>
+</body>
+</html>

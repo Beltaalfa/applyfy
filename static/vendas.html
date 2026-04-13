@@ -4,16 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
+  <link rel="icon" href="/static/logo/Icone.png?v=2" type="image/png">
+  <link rel="apple-touch-icon" href="/static/logo/Icone.png?v=2">
   <title>Vendas Consolidadas | Applyfy</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/painel-theme.css">
+  <link rel="stylesheet" href="/static/painel-theme.css?v=gold7">
 </head>
 <body data-active="/vendas">
   <div class="app-shell" id="app-shell">
     <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <img src="/static/logo/Icone.png?v=2" alt="" class="sidebar-toggle__icon" decoding="async" />
     </button>
     <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
     <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
@@ -24,6 +26,7 @@
         </div>
       </header>
       <main class="main-content wide">
+        <p class="text-muted" style="margin:0 0 1rem;line-height:1.5;max-width:40rem;">Lista consolidada de vendas: filtre por datas, texto, adquirente ou estado e exporte para Excel.</p>
         <div class="filters vendas-filters">
           <input type="date" id="dateFrom"><input type="date" id="dateTo">
           <input type="text" id="q" placeholder="Busca (venda, transação, cliente, produto)">
@@ -31,17 +34,19 @@
           <input type="text" id="status" placeholder="Status">
           <button type="button" id="btnBuscar">Buscar</button>
           <button type="button" id="btnMais">Carregar mais</button>
+          <button type="button" class="btn btn-primary" id="btnVendasXlsx">Exportar XLSX</button>
         </div>
         <p id="meta" class="muted">Carregando...</p>
         <div class="card">
           <div class="table-wrap">
-            <table><thead id="thead"></thead><tbody id="tbody"></tbody></table>
+            <table id="vendasTable"><thead id="thead"></thead><tbody id="tbody"></tbody></table>
           </div>
         </div>
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js?v=6" defer></script>
+  <script src="/static/painel-shell.js?v=28" defer></script>
+  <script src="/static/table-utils.js?v=3"></script>
   <script>
     var columns = [
       'codigo_venda','order_id','transaction_id','status_pagamento','valor_total','valor_cobrado','data_venda','data_liberacao','data_pagamento','data_atualizacao',
@@ -52,6 +57,8 @@
     ];
     var numeric = new Set(['valor_total','valor_cobrado','taxa_processamento','taxa_adquirente','retencao','comissao_produtor','valor_liquido_produtor','valor_unitario','quantidade','response_time_ms']);
     var offset = 0, limit = 200, total = 0, rows = [];
+    var vendasSortCol = null;
+    var vendasSortAsc = true;
     function fmt(k,v){
       if (v==null||v==='') return '–';
       if (numeric.has(k)) {
@@ -63,6 +70,50 @@
       }
       return String(v);
     }
+    function vendasSorted() {
+      if (!vendasSortCol) return rows.slice();
+      var col = vendasSortCol;
+      var asc = vendasSortAsc;
+      var mult = asc ? 1 : -1;
+      return rows.slice().sort(function (a, b) {
+        var va = a[col];
+        var vb = b[col];
+        if (numeric.has(col)) {
+          va = Number(va) || 0;
+          vb = Number(vb) || 0;
+          return mult * (va - vb);
+        }
+        va = (va == null ? '' : String(va)).toLowerCase();
+        vb = (vb == null ? '' : String(vb)).toLowerCase();
+        return mult * va.localeCompare(vb, 'pt-BR');
+      });
+    }
+    function render(){
+      var th=document.getElementById('thead'), tb=document.getElementById('tbody');
+      th.innerHTML='<tr>'+columns.map(function(c){
+        return '<th class="'+(numeric.has(c)?'num':'')+'" data-col="'+c+'" data-type="'+(numeric.has(c)?'num':'text')+'">'+c+' <span class="sort-icon">↕</span></th>';
+      }).join('')+'</tr>';
+      var list = vendasSorted();
+      tb.innerHTML = list.length ? list.map(function(r){
+        return '<tr>'+columns.map(function(c){
+          return '<td class="'+(numeric.has(c)?'num':'')+'" title="'+(r[c]??'')+'">'+fmt(c,r[c])+'</td>';
+        }).join('')+'</tr>';
+      }).join('') : '<tr><td colspan="'+columns.length+'" class="muted">Sem dados</td></tr>';
+      document.getElementById('meta').textContent = 'Total: '+total+' | Exibindo: '+rows.length;
+      document.querySelectorAll('#vendasTable th[data-col]').forEach(function (thEl) {
+        var dc = thEl.getAttribute('data-col');
+        thEl.classList.toggle('sorted', dc === vendasSortCol);
+        var icon = thEl.querySelector('.sort-icon');
+        if (icon) icon.textContent = dc === vendasSortCol ? (vendasSortAsc ? '↑' : '↓') : '↕';
+      });
+    }
+    function load(reset){
+      if(reset){offset=0;rows=[];}
+      fetch('/api/vendas?'+qs()).then(function(r){ return r.json(); }).then(function(d){
+        if(d.error){document.getElementById('meta').textContent='Erro: '+d.error;return;}
+        total=d.total||0; rows=rows.concat(d.rows||[]); offset=rows.length; render();
+      }).catch(function(e){document.getElementById('meta').textContent='Erro: '+e.message;});
+    }
     function qs(){
       var p = new URLSearchParams();
       var from=document.getElementById('dateFrom').value, to=document.getElementById('dateTo').value;
@@ -70,21 +121,33 @@
       if(from)p.set('date_from',from); if(to)p.set('date_to',to); if(q)p.set('q',q); if(aq)p.set('adquirente',aq); if(st)p.set('status_pagamento',st);
       p.set('limit',String(limit)); p.set('offset',String(offset)); return p.toString();
     }
-    function render(){
-      var th=document.getElementById('thead'), tb=document.getElementById('tbody');
-      th.innerHTML='<tr>'+columns.map(c=>'<th class="'+(numeric.has(c)?'num':'')+'">'+c+'</th>').join('')+'</tr>';
-      tb.innerHTML = rows.length ? rows.map(r=>'<tr>'+columns.map(c=>'<td class="'+(numeric.has(c)?'num':'')+'" title="'+(r[c]??'')+'">'+fmt(c,r[c])+'</td>').join('')+'</tr>').join('') : '<tr><td colspan="'+columns.length+'" class="muted">Sem dados</td></tr>';
-      document.getElementById('meta').textContent = 'Total: '+total+' | Exibindo: '+rows.length;
-    }
-    function load(reset){
-      if(reset){offset=0;rows=[];}
-      fetch('/api/vendas?'+qs()).then(r=>r.json()).then(d=>{
-        if(d.error){document.getElementById('meta').textContent='Erro: '+d.error;return;}
-        total=d.total||0; rows=rows.concat(d.rows||[]); offset=rows.length; render();
-      }).catch(e=>{document.getElementById('meta').textContent='Erro: '+e.message;});
-    }
-    document.getElementById('btnBuscar').addEventListener('click', ()=>load(true));
-    document.getElementById('btnMais').addEventListener('click', ()=>load(false));
+    document.getElementById('btnBuscar').addEventListener('click', function(){ load(true); });
+    document.getElementById('btnMais').addEventListener('click', function(){ load(false); });
+    document.getElementById('vendasTable').querySelector('thead').addEventListener('click', function (e) {
+      var th = e.target.closest('th[data-col]');
+      if (!th) return;
+      var col = th.getAttribute('data-col');
+      if (vendasSortCol === col) vendasSortAsc = !vendasSortAsc;
+      else {
+        vendasSortCol = col;
+        vendasSortAsc = ApplyfyTable.firstSortAsc(th.getAttribute("data-type") || "text");
+      }
+      render();
+    });
+    document.getElementById('btnVendasXlsx').addEventListener('click', function () {
+      if (!rows.length) return;
+      var list = vendasSorted();
+      var hdr = columns.slice();
+      var out = list.map(function (r) {
+        return columns.map(function (c) {
+          var v = r[c];
+          if (v == null) return '';
+          if (typeof v === 'object') return JSON.stringify(v);
+          return v;
+        });
+      });
+      ApplyfyTable.exportXLSX(hdr, out, 'vendas_vista.xlsx', 'Vendas');
+    });
     load(true);
   </script>
 </body>

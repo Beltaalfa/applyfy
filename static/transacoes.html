@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
+  <link rel="icon" href="/static/logo/Icone.png?v=2" type="image/png">
+  <link rel="apple-touch-icon" href="/static/logo/Icone.png?v=2">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Transações | Applyfy</title>
@@ -11,17 +13,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/painel-theme.css">
+  <link rel="stylesheet" href="/static/painel-theme.css?v=gold8">
   <style>
     .tx-intro { margin: 0 0 1.25rem; max-width: 40rem; }
     .tx-intro-lead { margin: 0; font-size: 0.9375rem; color: var(--zinc-300); line-height: 1.55; }
-    .tx-help { margin: 0 0 1.25rem; border: 1px solid var(--border); border-radius: var(--radius-lg); background: rgba(24, 24, 27, 0.45); overflow: hidden; }
-    .tx-help summary { cursor: pointer; padding: 0.65rem 1rem; font-size: 0.8125rem; font-weight: 500; color: var(--zinc-300); list-style: none; display: flex; align-items: center; gap: 0.5rem; }
-    .tx-help summary::-webkit-details-marker { display: none; }
-    .tx-help summary::before { content: ""; width: 0.35rem; height: 0.35rem; border-right: 2px solid var(--zinc-500); border-bottom: 2px solid var(--zinc-500); transform: rotate(-45deg); transition: transform 0.15s ease; flex-shrink: 0; }
-    .tx-help[open] summary::before { transform: rotate(45deg); margin-top: -0.15rem; }
-    .tx-help-body { padding: 0 1rem 1rem; font-size: 0.8125rem; color: var(--zinc-400); line-height: 1.6; border-top: 1px solid rgba(39, 39, 42, 0.8); }
-    .tx-help-body code { font-size: 0.78em; }
     .tx-filter-card { margin-bottom: 0.75rem; }
     .tx-filter-body { padding: 1rem 1.25rem 1.25rem; }
     .tx-field-group { margin: 0 0 1.35rem; }
@@ -33,7 +28,7 @@
     .tx-field input,
     .tx-field select { width: 100%; min-width: 0; }
     .tx-field input[type="datetime-local"] { padding: 0.45rem 0.65rem; border-radius: var(--radius); border: 1px solid var(--zinc-700); background: rgba(24, 24, 27, 0.5); color: var(--zinc-100); font-family: inherit; font-size: 0.8125rem; }
-    .tx-field input[type="datetime-local"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.35); }
+    .tx-field input[type="datetime-local"]:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-muted); }
     .tx-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--zinc-800); }
     .tx-actions-gap { flex: 1; min-width: 0.5rem; }
     #msgGateway.tx-status { min-height: 1.35rem; margin: 0.5rem 0 0.75rem; font-size: 0.875rem; color: var(--zinc-400); }
@@ -57,7 +52,7 @@
 <body data-active="/transacoes">
   <div class="app-shell" id="app-shell">
     <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <img src="/static/logo/Icone.png?v=2" alt="" class="sidebar-toggle__icon" decoding="async" />
     </button>
     <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
     <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
@@ -69,16 +64,8 @@
       </header>
       <main class="main-content wide">
         <div class="tx-intro">
-          <p class="tx-intro-lead">Lista paginada via proxy <code>GET /api/gateway/transactions</code> (API Admin ApplyFy). Cada coluna mostra um <strong>nome legível em português</strong>; passe o rato no cabeçalho para ver o caminho técnico da API. Deslize horizontalmente se houver muitos campos.</p>
+          <p class="tx-intro-lead">Consulte as transações da Applyfy, filtre por período ou outros critérios e exporte o resultado. Passe o rato nos títulos das colunas para ver mais detalhes; deslize a tabela na horizontal se precisar.</p>
         </div>
-
-        <details class="tx-help">
-          <summary>Parâmetros da API e autenticação no servidor</summary>
-          <div class="tx-help-body">
-            <p style="margin:0 0 0.75rem;">O painel encaminha para <code>…/gateway/admin/transactions</code> com as chaves configuradas no servidor (<code>APPLYFY_PUBLIC_KEY</code> / <code>APPLYFY_SECRET_KEY</code>).</p>
-            <p style="margin:0;">Query suportada (camelCase): <code>page</code>, <code>pageSize</code> (5–50), <code>transactionId</code>, <code>orderOrTransactionId</code>, <code>acquirerExternalId</code>, <code>clientEmail</code>, <code>clientDocument</code>, <code>producerEmail</code>, <code>paymentMethod</code>, <code>acquirer</code>, <code>status</code>, <code>subStatus</code>, <code>period</code>, <code>start</code>, <code>end</code>.</p>
-          </div>
-        </details>
 
         <section class="card tx-filter-card" aria-labelledby="tx-filters-heading">
           <div class="card-header" id="tx-filters-heading">Filtros</div>
@@ -182,6 +169,7 @@
               <button type="button" class="btn btn-secondary" id="btnGwPrev">Página anterior</button>
               <button type="button" class="btn btn-secondary" id="btnGwNext">Página seguinte</button>
               <button type="button" class="btn btn-secondary" id="btnGwLimpar">Limpar filtros</button>
+              <button type="button" class="btn btn-primary" id="btnGwXlsx">Exportar XLSX</button>
               <span class="tx-actions-gap" aria-hidden="true"></span>
             </div>
           </div>
@@ -223,12 +211,114 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js?v=12" defer></script>
+  <script src="/static/painel-shell.js?v=28" defer></script>
+  <script src="/static/table-utils.js?v=3"></script>
   <script>
     var API_BASE = typeof location !== 'undefined' ? location.origin : '';
     var gwPage = 1;
     window._gwItems = [];
     window._gwLastKeyCount = 0;
+    window._gwAllKeys = [];
+    window._gwFlatRows = [];
+    window._gwSortKey = null;
+    window._gwSortAsc = true;
+    function gwCompareCell(va, vb) {
+      if (va === vb) return 0;
+      if (va === undefined || va === null) return 1;
+      if (vb === undefined || vb === null) return -1;
+      if (typeof va === 'number' && typeof vb === 'number' && !isNaN(va) && !isNaN(vb)) return va - vb;
+      return String(va).localeCompare(String(vb), 'pt-BR');
+    }
+    function gwApplySortToItems(items, allKeys, flatRows) {
+      var key = window._gwSortKey;
+      if (!key || !items.length) return items.slice();
+      var asc = window._gwSortAsc;
+      var ix = items.map(function (_, i) {
+        return i;
+      });
+      ix.sort(function (ia, ib) {
+        var c = gwCompareCell(flatRows[ia][key], flatRows[ib][key]);
+        return asc ? c : -c;
+      });
+      return ix.map(function (i) {
+        return items[i];
+      });
+    }
+    function gwPaintGatewayTable(items, allKeys, pag) {
+      var msg = document.getElementById('msgGateway');
+      var tbody = document.getElementById('gwTbody');
+      var thead = document.getElementById('gwThead');
+      var flatRows = items.map(function (it) {
+        return gwFlattenJson(it, '', {});
+      });
+      var sortedItems = gwApplySortToItems(items, allKeys, flatRows);
+      var sortedFlats = sortedItems.map(function (it) {
+        return gwFlattenJson(it, '', {});
+      });
+      window._gwFlatRows = items.map(function (it) {
+        return gwFlattenJson(it, '', {});
+      });
+      window._gwAllKeys = allKeys;
+      msg.textContent =
+        'Página ' +
+        (pag.page || gwPage) +
+        ' de ' +
+        (pag.totalPages != null ? pag.totalPages : '?') +
+        ' — ' +
+        items.length +
+        ' linha(s)' +
+        (pag.count != null ? ' — total (API): ' + pag.count : '') +
+        (pag.pageSize != null ? ' — pageSize: ' + pag.pageSize : '') +
+        ' — ' +
+        allKeys.length +
+        ' coluna(s) de campos (JSON achatado)';
+      thead.innerHTML =
+        '<tr><th class="gw-sticky-col" scope="col" title="Abrir o registro completo em JSON">Ação</th>' +
+        allKeys
+          .map(function (k) {
+            return (
+              '<th scope="col" data-sort-key="' +
+              gwEsc(k) +
+              '" title="Campo API: ' +
+              gwEsc(k) +
+              '">' +
+              gwEsc(gwColumnLabel(k)) +
+              ' <span class="sort-icon">' +
+              (window._gwSortKey === k ? (window._gwSortAsc ? '↑' : '↓') : '↕') +
+              '</span></th>'
+            );
+          })
+          .join('') +
+        '</tr>';
+      tbody.innerHTML = sortedItems
+        .map(function (it, ix) {
+          var flat = sortedFlats[ix];
+          var origIx = items.indexOf(it);
+          if (origIx < 0) origIx = ix;
+          var btn =
+            '<td class="gw-sticky-col gw-json-cell"><button type="button" class="btn btn-secondary" style="padding:0.2rem 0.5rem;font-size:0.75rem;" data-gw-ix="' +
+            origIx +
+            '">Ver JSON</button></td>';
+          var cells = allKeys
+            .map(function (key) {
+              var v = flat[key];
+              var text = gwFmtCell(v);
+              var isNum = typeof v === 'number' && !isNaN(v);
+              var cls = 'gw-cell-data' + (isNum ? ' num' : '');
+              var title = text.length > 1800 ? text.slice(0, 1800) + '…' : text;
+              return '<td class="' + cls + '" title="' + gwEsc(title) + '">' + gwEsc(text) + '</td>';
+            })
+            .join('');
+          return '<tr>' + btn + cells + '</tr>';
+        })
+        .join('');
+      tbody.querySelectorAll('[data-gw-ix]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var i = parseInt(btn.getAttribute('data-gw-ix'), 10);
+          gwShowJson(i);
+        });
+      });
+    }
     function gwEsc(s) {
       if (s == null || s === '') return '';
       return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
@@ -522,13 +612,18 @@
           var totalP = pag.totalPages != null ? pag.totalPages : '?';
           var cnt = pag.count != null ? pag.count : '?';
           var tsize = pag.pageSize != null ? pag.pageSize : '';
+          window._gwLastPag = pag;
           if (!items.length) {
             window._gwLastKeyCount = 0;
+            window._gwSortKey = null;
+            window._gwSortAsc = true;
             thead.innerHTML = '<tr><th class="gw-sticky-col" scope="col">Ação</th><th scope="col">Sem colunas — nenhum item nesta página</th></tr>';
             tbody.innerHTML = '<tr><td colspan="2" class="empty">Nenhum resultado nesta página.</td></tr>';
             msg.textContent = 'Página ' + (pag.page || gwPage) + ' de ' + totalP + ' — 0 itens' + (cnt !== '?' ? ' — total (API): ' + cnt : '') + (tsize !== '' ? ' — pageSize: ' + tsize : '');
             return;
           }
+          window._gwSortKey = null;
+          window._gwSortAsc = true;
           var flatRows = items.map(function(it) { return gwFlattenJson(it, '', {}); });
           var keySet = {};
           flatRows.forEach(function(row) {
@@ -536,29 +631,7 @@
           });
           var allKeys = Object.keys(keySet).sort(function(a, b) { return a.localeCompare(b, 'pt-BR'); });
           window._gwLastKeyCount = allKeys.length;
-          msg.textContent = 'Página ' + (pag.page || gwPage) + ' de ' + totalP + ' — ' + items.length + ' linha(s)' + (cnt !== '?' ? ' — total (API): ' + cnt : '') + (tsize !== '' ? ' — pageSize: ' + tsize : '') + ' — ' + allKeys.length + ' coluna(s) de campos (JSON achatado)';
-          thead.innerHTML = '<tr><th class="gw-sticky-col" scope="col" title="Abrir o registro completo em JSON">Ação</th>' + allKeys.map(function(k) {
-            return '<th scope="col" title="Campo API: ' + gwEsc(k) + '">' + gwEsc(gwColumnLabel(k)) + '</th>';
-          }).join('') + '</tr>';
-          tbody.innerHTML = items.map(function(it, ix) {
-            var flat = flatRows[ix];
-            var btn = '<td class="gw-sticky-col gw-json-cell"><button type="button" class="btn btn-secondary" style="padding:0.2rem 0.5rem;font-size:0.75rem;" data-gw-ix="' + ix + '">Ver JSON</button></td>';
-            var cells = allKeys.map(function(key) {
-              var v = flat[key];
-              var text = gwFmtCell(v);
-              var isNum = typeof v === 'number' && !isNaN(v);
-              var cls = 'gw-cell-data' + (isNum ? ' num' : '');
-              var title = text.length > 1800 ? text.slice(0, 1800) + '…' : text;
-              return '<td class="' + cls + '" title="' + gwEsc(title) + '">' + gwEsc(text) + '</td>';
-            }).join('');
-            return '<tr>' + btn + cells + '</tr>';
-          }).join('');
-          tbody.querySelectorAll('[data-gw-ix]').forEach(function(btn) {
-            btn.addEventListener('click', function() {
-              var i = parseInt(btn.getAttribute('data-gw-ix'), 10);
-              gwShowJson(i);
-            });
-          });
+          gwPaintGatewayTable(items, allKeys, pag);
         })
         .catch(function(e) {
           document.getElementById('msgGateway').textContent = 'Erro de rede: ' + (e.message || '');
@@ -569,6 +642,52 @@
     document.getElementById('btnGwPrev').addEventListener('click', function() { if (gwPage > 1) { gwPage--; loadGatewayTransactions(); } });
     document.getElementById('btnGwNext').addEventListener('click', function() { gwPage++; loadGatewayTransactions(); });
     document.getElementById('btnGwLimpar').addEventListener('click', function() { gwClearFilters(); });
+    document.querySelector('.gw-tx-table').addEventListener('click', function (e) {
+      var th = e.target.closest('th[data-sort-key]');
+      if (!th) return;
+      var k = th.getAttribute('data-sort-key');
+      if (window._gwSortKey === k) window._gwSortAsc = !window._gwSortAsc;
+      else {
+        window._gwSortKey = k;
+        var flat0 =
+          window._gwItems && window._gwItems.length ? gwFlattenJson(window._gwItems[0], "", {}) : {};
+        var v0 = flat0[k];
+        var numish =
+          typeof v0 === "number" ||
+          (typeof v0 === "string" && String(v0).trim() !== "" && !isNaN(Number(v0)));
+        window._gwSortAsc = numish ? false : true;
+      }
+      if (window._gwItems && window._gwItems.length && window._gwAllKeys && window._gwAllKeys.length) {
+        gwPaintGatewayTable(window._gwItems, window._gwAllKeys, window._gwLastPag || {});
+      }
+    });
+    function gwExportVistaTx() {
+      var keys = window._gwAllKeys;
+      var items = window._gwItems;
+      if (!keys || !keys.length || !items || !items.length) return null;
+      var flatRows = items.map(function (it) {
+        return gwFlattenJson(it, '', {});
+      });
+      var sortedItems = gwApplySortToItems(items, keys, flatRows);
+      var headers = keys.map(function (k) {
+        return gwColumnLabel(k);
+      });
+      var rows = sortedItems.map(function (it) {
+        var fr = gwFlattenJson(it, '', {});
+        return keys.map(function (k) {
+          var v = fr[k];
+          if (v === null || v === undefined) return '';
+          if (typeof v === 'object') return JSON.stringify(v);
+          return String(v);
+        });
+      });
+      return { headers: headers, rows: rows };
+    }
+    document.getElementById('btnGwXlsx').addEventListener('click', function () {
+      var o = gwExportVistaTx();
+      if (!o) return;
+      ApplyfyTable.exportXLSX(o.headers, o.rows, 'transacoes_vista.xlsx', 'Transações');
+    });
   </script>
 </body>
 </html>

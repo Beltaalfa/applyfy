@@ -10,10 +10,10 @@ from typing import Any
 # (id, label, coarse)
 APPLYFY_SCREENS: tuple[tuple[str, str, str], ...] = (
     ("/", "Painel", "applyfy.painel"),
+    ("/dashboard", "Dashboard", "applyfy.painel"),
     ("/historico", "Histórico", "applyfy.painel"),
     ("/evolucao", "Evolução", "applyfy.painel"),
     ("/transacoes", "Transações", "applyfy.painel"),
-    ("/integracoes", "Integrações", "applyfy.jobs"),
     ("/meta", "Meta", "applyfy.painel"),
     ("/comercial", "Comercial", "applyfy.painel"),
     ("/produtores", "Consultar produtores", "applyfy.painel"),
@@ -32,8 +32,8 @@ _API_PREFIX_TO_SCREEN_RAW: tuple[tuple[str, str], ...] = (
     ("/api/gateway/producers", "/produtores"),
     ("/api/gateway/producer", "/produtores"),
     ("/api/financeiro", "/financeiro"),
-    ("/api/job-vendas", "/integracoes"),
-    ("/api/job", "/integracoes"),
+    ("/api/job-vendas", "/"),
+    ("/api/job", "/"),
     ("/api/comercial", "/comercial"),
     ("/api/hub/applyfy-commercial-users", "/comercial"),
     ("/api/vendas/log", "/"),
@@ -43,6 +43,7 @@ _API_PREFIX_TO_SCREEN_RAW: tuple[tuple[str, str], ...] = (
     ("/api/vendas", "/"),
     ("/api/transacoes", "/transacoes"),
     ("/api/evolucao", "/evolucao"),
+    ("/api/dashboard", "/dashboard"),
     ("/api/produtores-webhook", "/produtores"),
     ("/api/produtor", "/produtores"),
     ("/api/produtores", "/produtores"),
@@ -52,7 +53,7 @@ _API_PREFIX_TO_SCREEN_RAW: tuple[tuple[str, str], ...] = (
     ("/api/exportar", "/"),
     ("/api/datas", "/"),
     ("/api/settings", "/"),
-    ("/api/integracao-status", "/integracoes"),
+    ("/api/integracao-status", "/"),
 )
 
 
@@ -66,10 +67,12 @@ def normalize_applyfy_path(path: str) -> str:
         p = p[:-1]
     if p == "/index.html" or p.endswith("/index.html"):
         return "/"
-    if p == "/log-vendas.html" or p.endswith("/log-vendas.html"):
-        return "/log-vendas"
+    if p == "/vendas.html" or p.endswith("/vendas.html"):
+        return "/vendas"
     if p == "/evolucao.html" or p.endswith("/evolucao.html"):
         return "/evolucao"
+    if p == "/dashboard.html" or p.endswith("/dashboard.html"):
+        return "/dashboard"
     return p or "/"
 
 
@@ -88,6 +91,9 @@ def path_to_screen_id(path: str) -> str | None:
     p = normalize_applyfy_path(path)
     if p.startswith("/api/"):
         return api_path_to_screen_id(p)
+    # Ecrãs extra: mesmo acesso granular que o painel principal (JWT com "/")
+    if p == "/vendas":
+        return "/"
     if p in APPLYFY_SCREEN_IDS:
         return p
     if p.startswith("/financeiro/"):

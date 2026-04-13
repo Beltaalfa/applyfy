@@ -5,7 +5,7 @@ API Flask do painel Applyfy: último relatório (JSON) e download XLSX/CSV.
 import json
 import os
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 from flask import Flask, Response, g, redirect, request, session, jsonify, send_file, send_from_directory
@@ -269,6 +269,25 @@ def _carteira_assign_visible(rec: dict, sub: str | None, name_lower: str) -> boo
     return False
 
 
+def _dashboard_allowed_producer_emails():
+    """
+    None = todos os produtores (admin / não comercial).
+    Lista (pode ser vazia) = modo vendedor comercial: só emails atribuídos à carteira visível.
+    """
+    if not auth_hub.auth_enabled() or not auth_hub.session_is_somente_vendedor_comercial():
+        return None
+    sub = session.get("hub_sub")
+    name_lower = (session.get("hub_user_name") or "").strip().lower()
+    items = db.list_producer_vendedor()
+    out = []
+    for i in items:
+        if _carteira_assign_visible(i, sub, name_lower):
+            em = (i.get("producer_email") or "").strip()
+            if em:
+                out.append(em)
+    return out
+
+
 def _filter_relatorio_vendedor_comercial(resultados: list) -> list:
     if not resultados:
         return []
@@ -504,7 +523,7 @@ def _admin_or_hub_ok() -> bool:
 
 
 def _sync_transactions_auth_ok() -> bool:
-    """Sincronização: token admin; Hub applyfy.admin ou applyfy.jobs (mesmo critério que /integracoes); ou APPLYFY_SYNC_SECRET (cron)."""
+    """Sincronização: token admin; Hub applyfy.admin ou applyfy.jobs; ou APPLYFY_SYNC_SECRET (cron)."""
     if _admin_token_ok():
         return True
     if auth_hub.auth_enabled() and (
@@ -811,6 +830,305 @@ def api_evolucao():
         "series_diario_source": series_diario_source,
     }
     return jsonify(payload)
+
+
+def _dashboard_chart_adquirentes_payload(vendas_agg: dict) -> dict:
+    """Valor líquido e % por adquirente (applyfy_vendas) para o gráfico de rosca."""
+    rows_in = (vendas_agg or {}).get("by_adquirente") or []
+    total = sum(float(r.get("total") or 0) for r in rows_in)
+    out_rows: list[dict] = []
+    for r in rows_in:
+        t = float(r.get("total") or 0)
+        lbl = (str(r.get("label") or "")).strip() or "(sem adquirente)"
+        out_rows.append(
+            {
+                "label": lbl,
+                "valor": round(t, 2),
+                "transacoes": int(r.get("count") or 0),
+                "pct": round((t / total * 100.0) if total > 0 else 0.0, 2),
+            }
+        )
+    return {"rows": out_rows, "total_valor": round(total, 2)}
+
+
+def _dashboard_chart_metodos_payload(vendas_agg: dict, parcelas_cartao: list[dict]) -> dict:
+    """Rosca por método de pagamento + rosca de parcelas só no cartão (applyfy_vendas)."""
+    rows_m = (vendas_agg or {}).get("by_metodo") or []
+    kpis = (vendas_agg or {}).get("kpis") or {}
+    total = float(kpis.get("valor_liquido_sum") or 0)
+    if total <= 0:
+        total = sum(float(r.get("total") or 0) for r in rows_m)
+    out_m: list[dict] = []
+    for r in rows_m:
+        t = float(r.get("total") or 0)
+        lbl = (str(r.get("label") or "")).strip() or "(sem método)"
+        out_m.append(
+            {
+                "label": lbl,
+                "valor": round(t, 2),
+                "transacoes": int(r.get("count") or 0),
+                "pct": round((t / total * 100.0) if total > 0 else 0.0, 2),
+            }
+        )
+    card_sum = sum(float(p.get("valor") or 0) for p in parcelas_cartao)
+    out_p: list[dict] = []
+    for p in parcelas_cartao:
+        t = float(p.get("valor") or 0)
+        out_p.append(
+            {
+                "label": (p.get("label") or "").strip() or "?x",
+                "n_parcelas": int(p.get("n_parcelas") or 1),
+                "valor": round(t, 2),
+                "transacoes": int(p.get("transacoes") or 0),
+                "pct_cartao": round((t / card_sum * 100.0) if card_sum > 0 else 0.0, 2),
+                "pct_total": round((t / total * 100.0) if total > 0 else 0.0, 2),
+            }
+        )
+    return {
+        "metodos": {"rows": out_m, "total_valor": round(total, 2)},
+        "cartao_parcelas": {"rows": out_p, "valor_cartao": round(card_sum, 2)},
+    }
+
+
+def _dashboard_agg_rows_total(rows: list | None) -> float:
+    """Soma de ``total`` nas linhas de agregação (método/adquirente); lista vazia ou só zeros => 0."""
+    if not rows:
+        return 0.0
+    return sum(float(r.get("total") or 0) for r in rows if isinstance(r, dict))
+
+
+@app.route("/api/dashboard")
+def api_dashboard():
+    """Agregados para o dashboard executivo (saldos em snapshot + applyfy_tx_facts no período)."""
+    try:
+        d_to_raw = (request.args.get("to") or request.args.get("date_to") or "").strip()
+        d_from_raw = (request.args.get("from") or request.args.get("date_from") or "").strip()
+        today = date.today()
+        d_to = date.fromisoformat(d_to_raw[:10]) if len(d_to_raw) >= 10 else today
+        d_from = date.fromisoformat(d_from_raw[:10]) if len(d_from_raw) >= 10 else (today - timedelta(days=30))
+        if d_from > d_to:
+            return jsonify({"error": "Data inicial maior que final."}), 400
+        if (d_to - d_from).days > 366:
+            return jsonify({"error": "Período máximo: 366 dias."}), 400
+        d_from_s = d_from.isoformat()
+        d_to_s = d_to.isoformat()
+    except ValueError:
+        return jsonify({"error": "Datas inválidas (use YYYY-MM-DD)."}), 400
+
+    allowed = _dashboard_allowed_producer_emails()
+
+    try:
+        ranking_vendas = db.dashboard_ranking_vendas_snapshot_latest(
+            15,
+            allowed_emails=allowed,
+            api_period_from=d_from_s,
+            api_period_to=d_to_s,
+        )
+        ranking_chargeback = db.dashboard_ranking_chargeback_period(
+            d_from_s, d_to_s, 15, allowed_emails=allowed
+        )
+        serie = db.dashboard_tx_facts_global_daily(d_from_s, d_to_s, producer_emails=allowed)
+        tx_tot = db.dashboard_tx_facts_period_totals(d_from_s, d_to_s, producer_emails=allowed)
+        # Totais do período sem filtro de carteira (usado só para ticket médio e fallback coerente)
+        tx_tot_global_periodo = (
+            tx_tot
+            if allowed is None
+            else db.dashboard_tx_facts_period_totals(d_from_s, d_to_s, None)
+        )
+    except Exception as e:
+        app.logger.exception("api_dashboard")
+        return jsonify({"error": str(e)[:500]}), 500
+
+    vendas_agg: dict = {}
+    try:
+        vendas_agg = db.dashboard_vendas_aggregates(
+            d_from_s, d_to_s, allowed_producer_emails=allowed, top_limit=30
+        )
+    except Exception:
+        app.logger.exception("dashboard_vendas_aggregates (dashboard)")
+        vendas_agg = {"by_adquirente": [], "kpis": {}}
+
+    chart_metodos_adquirentes_source = "applyfy_vendas"
+    try:
+        sum_m0 = _dashboard_agg_rows_total(vendas_agg.get("by_metodo"))
+        sum_a0 = _dashboard_agg_rows_total(vendas_agg.get("by_adquirente"))
+        need_m = sum_m0 <= 0
+        need_a = sum_a0 <= 0
+        used_meta = False
+        used_wh = False
+        if need_m or need_a:
+            fb_meta = db.dashboard_metodo_adquirente_from_tx_facts_meta(
+                d_from_s, d_to_s, producer_emails=allowed
+            )
+            if need_m and (fb_meta.get("by_metodo") or []):
+                vendas_agg = {**vendas_agg, "by_metodo": list(fb_meta.get("by_metodo") or [])}
+                used_meta = True
+            if need_a and (fb_meta.get("by_adquirente") or []):
+                vendas_agg = {**vendas_agg, "by_adquirente": list(fb_meta.get("by_adquirente") or [])}
+                used_meta = True
+            if used_meta:
+                chart_metodos_adquirentes_source = "tx_facts_meta"
+            sum_m = _dashboard_agg_rows_total(vendas_agg.get("by_metodo"))
+            sum_a = _dashboard_agg_rows_total(vendas_agg.get("by_adquirente"))
+            need_m = sum_m <= 0
+            need_a = sum_a <= 0
+            if need_m or need_a:
+                fb_ma = db.dashboard_metodo_adquirente_fallback_webhooks(
+                    d_from_s, d_to_s, producer_emails=allowed
+                )
+                if need_m and (fb_ma.get("by_metodo") or []):
+                    vendas_agg = {**vendas_agg, "by_metodo": list(fb_ma.get("by_metodo") or [])}
+                    used_wh = True
+                if need_a and (fb_ma.get("by_adquirente") or []):
+                    vendas_agg = {**vendas_agg, "by_adquirente": list(fb_ma.get("by_adquirente") or [])}
+                    used_wh = True
+                if used_wh and not used_meta:
+                    chart_metodos_adquirentes_source = "tx_facts_webhooks"
+            # #region agent log
+            try:
+                import time as _time
+
+                sum_m1 = _dashboard_agg_rows_total(vendas_agg.get("by_metodo"))
+                sum_a1 = _dashboard_agg_rows_total(vendas_agg.get("by_adquirente"))
+                _pl = {
+                    "sessionId": "d1495d",
+                    "hypothesisId": "H4",
+                    "location": "app.py:api_dashboard:metodos_adquirentes",
+                    "message": "fonte gráficos método/adquirente",
+                    "data": {
+                        "chart_metodos_adquirentes_source": chart_metodos_adquirentes_source,
+                        "period": {"from": d_from_s, "to": d_to_s},
+                        "sum_import_metodo": sum_m0,
+                        "sum_import_adquirente": sum_a0,
+                        "sum_after_fallback_metodo": sum_m1,
+                        "sum_after_fallback_adquirente": sum_a1,
+                        "need_metodo_fallback_initial": sum_m0 <= 0,
+                        "need_adquirente_fallback_initial": sum_a0 <= 0,
+                        "used_tx_facts_meta": used_meta,
+                        "used_webhooks": used_wh,
+                    },
+                    "timestamp": int(_time.time() * 1000),
+                }
+                with open("/var/www/.cursor/debug-d1495d.log", "a", encoding="utf-8") as _df:
+                    _df.write(json.dumps(_pl, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
+    except Exception:
+        app.logger.exception("dashboard metodo/adquirente (tx_facts_meta ou webhooks)")
+
+    chart_adquirentes = _dashboard_chart_adquirentes_payload(vendas_agg)
+
+    parcelas_cartao: list[dict] = []
+    try:
+        parcelas_cartao = db.dashboard_vendas_cartao_por_parcelas(
+            d_from_s, d_to_s, allowed_producer_emails=allowed
+        )
+    except Exception:
+        app.logger.exception("dashboard_vendas_cartao_por_parcelas")
+    chart_metodos_pagamento = _dashboard_chart_metodos_payload(vendas_agg, parcelas_cartao)
+
+    chart_erros_transacao: dict = {"rows": [], "total": 0, "source": None}
+    try:
+        chart_erros_transacao = db.dashboard_erro_transacao_por_descricao(
+            d_from_s, d_to_s, allowed_producer_emails=allowed, limit=25
+        )
+    except Exception:
+        app.logger.exception("dashboard_erro_transacao_por_descricao")
+
+    ticket_medio_payload: dict = {"serie_diaria": [], "periodo": {}}
+    ticket_medio_source = "applyfy_vendas"
+    try:
+        # Ticket médio: sempre agregado só por datas do período (todos os produtores), sem filtro comercial
+        ticket_medio_payload = db.dashboard_ticket_medio_diario(
+            d_from_s, d_to_s, allowed_producer_emails=None
+        )
+    except Exception:
+        app.logger.exception("dashboard_ticket_medio_diario")
+
+    _tm_period = ticket_medio_payload.get("periodo") or {}
+    if int(_tm_period.get("vendas_count") or 0) == 0 and float(
+        (tx_tot_global_periodo or {}).get("vendas_net") or 0
+    ) > 0:
+        try:
+            ticket_medio_payload = db.dashboard_ticket_medio_tx_facts_diario(
+                d_from_s, d_to_s, producer_emails=None
+            )
+            ticket_medio_source = "tx_facts"
+        except Exception:
+            app.logger.exception("dashboard_ticket_medio_tx_facts_diario")
+
+    n_vendas_periodo_sem_filtro_email = 0
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                """
+                SELECT COUNT(*)::int FROM applyfy_vendas
+                WHERE COALESCE(data_venda::date, data_pagamento::date, data_liberacao::date, data_atualizacao::date) IS NOT NULL
+                  AND COALESCE(data_venda::date, data_pagamento::date, data_liberacao::date, data_atualizacao::date) >= %s::date
+                  AND COALESCE(data_venda::date, data_pagamento::date, data_liberacao::date, data_atualizacao::date) <= %s::date
+                """,
+                (d_from_s, d_to_s),
+            )
+            n_vendas_periodo_sem_filtro_email = int((cur.fetchone() or [0])[0] or 0)
+    except Exception:
+        n_vendas_periodo_sem_filtro_email = -1
+
+    meta = float(config.get_meta_vendas_liquidas())
+    vnet = float((tx_tot or {}).get("vendas_net") or 0)
+    pct_meta = (vnet / meta * 100.0) if meta > 0 else None
+    produtores_meta_ok = db.dashboard_produtores_atingiram_meta(
+        d_from_s, d_to_s, meta, producer_emails=allowed
+    )
+
+    hints = []
+    carteira_sem_produtores = allowed is not None and len(allowed) == 0
+    if carteira_sem_produtores:
+        hints.append(
+            "Modo comercial: não há produtores atribuídos à sua carteira. "
+            "Os indicadores baseados em vendas importadas (métodos, adquirentes, erros, ticket médio) ficam vazios até o administrador associar produtores."
+        )
+    if (
+        not carteira_sem_produtores
+        and n_vendas_periodo_sem_filtro_email == 0
+        and vnet > 0
+        and chart_metodos_adquirentes_source != "tx_facts_webhooks"
+        and chart_metodos_adquirentes_source != "tx_facts_meta"
+    ):
+        hints.append(
+            "Método de pagamento e adquirente: sem linhas na importação de encomendas; o painel tenta preencher a partir dos factos (campos acquirer/payment_method na API) e, se ainda faltar, a partir do último webhook por transação. Mensagens de erro continuam a depender da importação."
+        )
+    if not carteira_sem_produtores and (
+        not serie
+        or all(
+            (float(s.get("vendas_net") or 0) == 0 and float(s.get("chargeback") or 0) == 0) for s in serie
+        )
+    ):
+        hints.append(
+            "Não há movimento registado neste período. Se esperava valores, confirme as datas ou fale com o suporte."
+        )
+
+    return jsonify(
+        {
+            "period": {"from": d_from_s, "to": d_to_s},
+            "meta_global": meta,
+            "pct_meta_vendas_liquidas": round(pct_meta, 2) if pct_meta is not None else None,
+            "produtores_atingiram_meta": produtores_meta_ok,
+            "ranking_vendas_snapshot": ranking_vendas,
+            "ranking_chargeback_period": ranking_chargeback,
+            "tx_facts": {"serie_diaria": serie, "totais_periodo": tx_tot},
+            "chart_adquirentes": chart_adquirentes,
+            "chart_metodos_pagamento": chart_metodos_pagamento,
+            "chart_metodos_adquirentes_source": chart_metodos_adquirentes_source,
+            "chart_erros_transacao": chart_erros_transacao,
+            "ticket_medio": ticket_medio_payload,
+            "ticket_medio_source": ticket_medio_source,
+            "filtro_comercial_ativo": allowed is not None,
+            "carteira_comercial_sem_produtores": carteira_sem_produtores,
+            "empty_hints": hints,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
 
 
 @app.route("/api/produtores")
@@ -1545,7 +1863,7 @@ def health():
 
 @app.route("/favicon.ico")
 def favicon():
-    return "", 204
+    return redirect("/static/logo/Icone.png?v=2", code=302)
 
 
 @app.route("/static/<path:path>")
@@ -1613,13 +1931,6 @@ def log_page():
     return send_from_directory(app.static_folder, "log.html")
 
 
-@app.route("/log-vendas")
-@app.route("/log-vendas.html")
-def log_vendas_page():
-    """HTML do painel de log de vendas (duas URLs para nginx/proxy e links diretos)."""
-    return send_from_directory(app.static_folder, "log-vendas.html")
-
-
 @app.route("/transacoes")
 def transacoes_page():
     return send_from_directory(app.static_folder, "transacoes.html")
@@ -1660,9 +1971,25 @@ def taxas_page():
     )
 
 
-@app.route("/integracoes")
-def integracoes_page():
-    return send_from_directory(app.static_folder, "integracoes.html")
+@app.route("/dashboard")
+@app.route("/dashboard/")
+def dashboard_page():
+    return send_from_directory(
+        app.static_folder,
+        "dashboard.html",
+        mimetype="text/html; charset=utf-8",
+        max_age=0,
+    )
+
+
+@app.route("/dashboard.html")
+def dashboard_html():
+    return send_from_directory(
+        app.static_folder,
+        "dashboard.html",
+        mimetype="text/html; charset=utf-8",
+        max_age=0,
+    )
 
 
 @app.route("/meta")

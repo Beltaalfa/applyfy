@@ -427,6 +427,13 @@ def session_can_access_path(path: str) -> bool:
     if ap.startswith("/api/gateway/producer"):
         if "/produtores" in allowed or "/saldo" in allowed or "/taxas" in allowed:
             return True
+    # Jobs Playwright / estado de integração: não há ecrã dedicado no menu; usa permissão coarse.
+    if ap.startswith("/api/job") or ap.startswith("/api/job-vendas"):
+        if "applyfy.jobs" in perms or "applyfy.admin" in perms:
+            return True
+    if ap.startswith("/api/integracao-status"):
+        if "applyfy.jobs" in perms or "applyfy.admin" in perms or "applyfy.painel" in perms:
+            return True
     sid = path_to_screen_id(path)
     if sid is None:
         return False
@@ -493,8 +500,6 @@ def required_permissions_for_path(path: str) -> tuple[str, ...] | None:
     p = path.rstrip("/") or "/"
     if p in ("/financeiro",) or path.startswith("/financeiro/"):
         return ("applyfy.financeiro",)
-    if p in ("/integracoes",):
-        return ("applyfy.jobs",)
     if path in (
         "/health",
         "/favicon.ico",
@@ -553,10 +558,11 @@ def hub_me_payload() -> dict[str, Any]:
 # Mapa href do menu -> permissão necessária (painel-shell.js)
 NAV_PERMISSIONS: dict[str, str] = {
     "/": "applyfy.painel",
+    "/dashboard": "applyfy.painel",
     "/historico": "applyfy.painel",
     "/evolucao": "applyfy.painel",
     "/transacoes": "applyfy.painel",
-    "/integracoes": "applyfy.jobs",
+    "/vendas": "applyfy.painel",
     "/meta": "applyfy.painel",
     "/comercial": "applyfy.painel",
     "/produtores": "applyfy.painel",

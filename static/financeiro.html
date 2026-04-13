@@ -4,17 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
+  <link rel="icon" href="/static/logo/Icone.png?v=2" type="image/png">
+  <link rel="apple-touch-icon" href="/static/logo/Icone.png?v=2">
   <title>Fluxo de caixa, DRE e DFC | Applyfy</title>
   <link rel="manifest" href="/static/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/painel-theme.css">
+  <link rel="stylesheet" href="/static/painel-theme.css?v=gold7">
 </head>
 <body data-active="/financeiro">
   <div class="app-shell" id="app-shell">
     <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <img src="/static/logo/Icone.png?v=2" alt="" class="sidebar-toggle__icon" decoding="async" />
     </button>
     <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
     <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
@@ -25,6 +27,7 @@
         </div>
       </header>
       <main class="main-content">
+        <p class="text-muted" style="margin:0 0 1rem;line-height:1.5;max-width:42rem;">Controlo interno: categorias, lançamentos, importação de extratos e relatórios de fluxo de caixa, resultado (DRE) e fluxo de caixa (DFC).</p>
         <div class="tabs">
           <button type="button" data-tab="categorias">Categorias</button>
           <button type="button" data-tab="lancamentos">Lançamentos</button>
@@ -65,7 +68,7 @@
           <div class="card"><div class="table-wrap flat"><table><thead><tr><th>Data</th><th class="num">Valor</th><th>Tipo</th><th>Categoria</th><th>Descrição</th><th>Ações</th></tr></thead><tbody id="tbodyLancamentos"><tr><td colspan="6" class="empty">Use os filtros e clique em Buscar.</td></tr></tbody></table></div></div>
         </div>
         <div id="panel-ofx" class="tab-panel">
-          <p class="text-muted">Envie <strong>OFX/QFX</strong> ou CSV Nubank. Crédito no banco ↔ receita no lançamento; débito ↔ despesa. Exige <strong>PostgreSQL</strong> (<code>DATABASE_URL</code> no .env).</p>
+          <p class="text-muted">Envie ficheiro de banco (OFX ou QFX) ou CSV do Nubank. Entradas no extrato viram receitas e saídas viram despesas. Esta área precisa da base de dados ativa no servidor.</p>
           <div class="form-inline" style="margin-bottom:1rem;flex-wrap:wrap;gap:0.5rem;">
             <input type="file" id="ofxFile" accept=".ofx,.qfx,.csv">
             <button type="button" class="btn btn-primary" id="btnOfxUpload">Enviar extrato</button>
@@ -92,7 +95,7 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js?v=6" defer></script>
+  <script src="/static/painel-shell.js?v=28" defer></script>
   <script src="/static/financeiro.js"></script>
 </body>
 </html>

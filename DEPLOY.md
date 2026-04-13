@@ -76,7 +76,7 @@ Alertas opcionais:
 
 **Troubleshooting WAHA:** `401` — API key ou sessão; mensagem não entrega — confirme `chatId` e que a sessão WAHA está `WORKING`; timeouts — firewall entre este servidor e o WAHA.
 
-**Painel “Integrações”:** rota `/integracoes` mostra `/api/health`, últimos timestamps de export/webhook, contagem da fila DLQ e flags de atraso/silêncio (`APPLYFY_EXPORT_STALE_HOURS`, `APPLYFY_WEBHOOK_SILENCE_HOURS`).
+**Estado e DLQ (operacional):** `GET /api/health` e `GET /api/integracao-status` expõem health, últimos timestamps de export/webhook, fila DLQ e flags (`APPLYFY_EXPORT_STALE_HOURS`, `APPLYFY_WEBHOOK_SILENCE_HOURS`) — uso interno / monitorização, sem página dedicada no painel.
 
 **Fila DLQ (webhooks):** falhas ao gravar em `applyfy_transactions` são guardadas em `applyfy_webhook_dlq`. Listagem e reprocessamento: `GET /api/admin/webhook-dlq` e `POST /api/admin/webhook-dlq/retry` com JSON `{"id": <id>}` e o mesmo token admin.
 
@@ -97,7 +97,7 @@ Sincronização **diária** (alternativa mais leve na API):
 cd /var/www/applyfy && . env.sh && /var/www/applyfy/venv/bin/python scripts/sync_transactions.py >> /var/www/applyfy/data/cron.log 2>&1
 ```
 
-Variáveis opcionais: `APPLYFY_SYNC_WINDOW_DAYS` (default 14; use **2–7** se correr **horária**), `APPLYFY_SYNC_MAX_PAGES`. O botão em `/integracoes` envia `POST {"quick":true}` (primeiros N produtores, ver `APPLYFY_SYNC_QUICK_*`). Sync **completa** via cron não deve usar `quick`. **HTTP 504** no painel: aumente `proxy_read_timeout` no Nginx para `/api/internal/sync-transactions` (ex.: 600s, ver `nginx-applyfy.conf`) e `--timeout` do Gunicorn (≥600); depois `sudo systemctl daemon-reload && sudo systemctl restart applyfy-painel && sudo nginx -t && sudo systemctl reload nginx`.
+Variáveis opcionais: `APPLYFY_SYNC_WINDOW_DAYS` (default 14; use **2–7** se correr **horária**), `APPLYFY_SYNC_MAX_PAGES`. Chamadas `POST /api/internal/sync-transactions` com `{"quick":true}` (primeiros N produtores, ver `APPLYFY_SYNC_QUICK_*`) são para uso controlado (não expostas como botão no painel público). Sync **completa** via cron não deve usar `quick`. **HTTP 504** no painel: aumente `proxy_read_timeout` no Nginx para `/api/internal/sync-transactions` (ex.: 600s, ver `nginx-applyfy.conf`) e `--timeout` do Gunicorn (≥600); depois `sudo systemctl daemon-reload && sudo systemctl restart applyfy-painel && sudo nginx -t && sudo systemctl reload nginx`.
 
 Na primeira vez, pode executar `scripts/sync_transactions.py --backfill-webhooks` para derivar factos dos webhooks já guardados. Sincronização HTTP alternativa: `POST /api/internal/sync-transactions` com corpo vazio (janela rolling) ou JSON `{"email","from","to"}`; autenticação: header `X-Applyfy-Sync-Secret` se `APPLYFY_SYNC_SECRET` estiver definido, senão token admin (`X-Applyfy-Admin-Token`) ou sessão Hub (`applyfy.jobs` / `applyfy.admin`).
 
@@ -153,7 +153,7 @@ As tabelas são criadas automaticamente na primeira gravação (`export_runs`).
 
 ## 5b. Ficheiros estáticos do painel (`static/`)
 
-O Flask serve `/`, `/historico`, `/vendas`, `/log-vendas`, etc. a partir de **`static/*.html`**. Se esses ficheiros **não existirem**, o browser mostra **Not Found** (404 do Flask).
+O Flask serve `/`, `/historico`, `/vendas`, etc. a partir de **`static/*.html`**. Se esses ficheiros **não existirem**, o browser mostra **Not Found** (404 do Flask).
 
 - Garanta que a pasta `static/` no servidor contém os HTML referidos em `app.py` (ex.: `index.html`, `historico.html`, `vendas.html`, …). O tema e o layout estão sobretudo em **`<style>` inline** nesses HTML (não há ficheiros `.css` separados obrigatórios no repositório atual).
 - Após deploy, valide o tema em **`/design-system`** (card, badges, modal de exemplo) e o painel em **`/`**.
@@ -171,9 +171,7 @@ Teste rápido: `curl -sI https://applyfy.northempresarial.com/health` → `200`;
 | Histórico | `/historico` | Datas e relatório por `run_at` |
 | Vendas | `/vendas` | Lista em cards (API `/api/vendas`) |
 | Transações | `/transacoes` | Webhook em cards (API `/api/transacoes`) |
-| Integrações | `/integracoes` | Health, último export/webhook, DLQ, links |
 | Meta | `/meta` | Progresso vs meta de vendas líquidas (`/api/settings`) |
-| Log vendas | `/log-vendas` | Texto do export de vendas |
 | Log saldos | `/log` | Texto `applyfy_log.txt` + excerto `cron.log` (`/api/log`) |
 | Financeiro | `/financeiro` | Categorias (API) |
 | Produtores | `/produtores` | Lista para dropdown |
@@ -348,9 +346,8 @@ Arquivos de saída em `data/` (com `APPLYFY_EXPORT_ISOLATION=vendas`, os nomes g
 - `applyfy_orders_log.json`
 - `orders_export_checkpoint.json` (retomada)
 
-**Painel web — log e job de vendas**
+**Painel web — job e APIs de vendas**
 
-- URL: **`/log-vendas.html`** ou **`/log-vendas`** (ambas servidas pelo Flask após deploy).
 - APIs: `GET /api/vendas/log` ou `GET /api/vendas-log`, `GET /api/vendas/import-log` ou `GET /api/vendas-import-log`, `POST /api/job-vendas/start`, `POST /api/job-vendas/stop`.
 - Se o HTML carregar mas as APIs retornarem erro em JSON: o `app.py` em produção está desatualizado — faça **git pull** e **`sudo systemctl restart applyfy-painel`** (ou o nome do seu unit).
 - **Iniciar export** no painel executa `03_exportar_vendas.py` como o mesmo usuário do gunicorn; exige `venv`, Playwright/Chromium instalados e `data/sessao_applyfy.json` válida.

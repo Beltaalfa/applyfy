@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
+  <link rel="icon" href="/static/logo/Icone.png?v=2" type="image/png">
+  <link rel="apple-touch-icon" href="/static/logo/Icone.png?v=2">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Consultar Produtores | Applyfy</title>
@@ -11,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/painel-theme.css">
+  <link rel="stylesheet" href="/static/painel-theme.css?v=gold7">
   <style>
     .consultar-lead { color: var(--zinc-400); font-size: 0.95rem; max-width: 48rem; margin: 0 0 1rem; line-height: 1.55; }
     .consultar-lead code { font-size: 0.85em; }
@@ -45,7 +47,7 @@
 <body data-active="/produtores">
   <div class="app-shell" id="app-shell">
     <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <img src="/static/logo/Icone.png?v=2" alt="" class="sidebar-toggle__icon" decoding="async" />
     </button>
     <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
     <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
@@ -56,10 +58,8 @@
         </div>
       </header>
       <main class="main-content">
-        <p class="consultar-lead">Conforme a API oficial Applyfy: <strong>GET</strong>
-          <code>https://app.applyfy.com.br/api/v1/gateway/admin/producers</code>.
-          Autenticação no servidor com <code>x-public-key</code> e <code>x-secret-key</code> (nunca expostas ao browser). O painel usa o proxy <code>/api/gateway/producers</code>.</p>
-        <p class="doc-hint">Query suportados: <code>page</code>, <code>pageSize</code> (5–50, padrão 20), <code>nameOrEmail</code>, <code>phone</code>, <code>status</code>, <code>kycStatus</code>, <code>bankDataStatus</code>, <code>minDocumentsSent</code>, <code>accountType</code>, <code>tags</code> (IDs separados por vírgula). Vários status aceitam valores separados por vírgula.</p>
+        <p class="consultar-lead">Lista de produtores da Applyfy. Use os filtros para encontrar por nome, email, telefone ou estado e abra um produtor para ver os detalhes.</p>
+        <p class="doc-hint">Vários critérios podem ser combinados; em «estado» pode indicar mais de um valor separado por vírgula.</p>
 
         <p class="section-label">Filtros</p>
         <div class="filtro" id="gwProdFiltro1">
@@ -77,6 +77,7 @@
           <button type="button" class="btn btn-primary" id="btnGwProdCarregar">Consultar</button>
           <button type="button" class="btn btn-secondary" id="btnGwProdPrev">Página anterior</button>
           <button type="button" class="btn btn-secondary" id="btnGwProdNext">Página seguinte</button>
+          <button type="button" class="btn btn-primary" id="btnGwProdXlsx">Exportar XLSX</button>
         </div>
         <div class="filtro" id="gwProdFiltro2">
           <label for="gwProdStatus">status</label>
@@ -95,20 +96,20 @@
         <p id="msgGwProd" class="text-muted" style="margin:0.35rem 0 0.75rem;">A carregar…</p>
         <div class="card gw-table-wrap">
           <div class="table-wrap flat">
-            <table>
+            <table id="gwProdTable">
               <thead>
                 <tr>
-                  <th>id</th>
-                  <th>displayName</th>
-                  <th>email</th>
-                  <th>phone</th>
-                  <th>status</th>
-                  <th class="num">documentsCount</th>
-                  <th class="num">clientCount</th>
-                  <th class="num">transactionsCount</th>
-                  <th>kycStatus</th>
-                  <th>bankDataStatus</th>
-                  <th>tags</th>
+                  <th data-col="id" data-type="num">id <span class="sort-icon">↕</span></th>
+                  <th data-col="displayName" data-type="text">displayName <span class="sort-icon">↕</span></th>
+                  <th data-col="email" data-type="text">email <span class="sort-icon">↕</span></th>
+                  <th data-col="phone" data-type="text">phone <span class="sort-icon">↕</span></th>
+                  <th data-col="status" data-type="text">status <span class="sort-icon">↕</span></th>
+                  <th data-col="documentsCount" data-type="num" class="num">documentsCount <span class="sort-icon">↕</span></th>
+                  <th data-col="clientCount" data-type="num" class="num">clientCount <span class="sort-icon">↕</span></th>
+                  <th data-col="transactionsCount" data-type="num" class="num">transactionsCount <span class="sort-icon">↕</span></th>
+                  <th data-col="kycStatus" data-type="text">kycStatus <span class="sort-icon">↕</span></th>
+                  <th data-col="bankDataStatus" data-type="text">bankDataStatus <span class="sort-icon">↕</span></th>
+                  <th data-col="tags" data-type="text">tags <span class="sort-icon">↕</span></th>
                   <th></th>
                 </tr>
               </thead>
@@ -153,7 +154,8 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js?v=10" defer></script>
+  <script src="/static/painel-shell.js?v=28" defer></script>
+  <script src="/static/table-utils.js?v=3"></script>
   <script>
     function gwEsc(s) {
       if (s == null || s === '') return '';
@@ -347,7 +349,7 @@
       var t = (bodyText || '').trim();
       if (/^<!doctype/i.test(t) || /^<html/i.test(t)) {
         if (status === 404) {
-          return 'HTTP 404: o backend não tem esta rota (código antigo ou serviço não reiniciado). Abra no browser /api/gateway/ping — se também for 404, no servidor: actualize /var/www/applyfy e sudo systemctl restart applyfy-painel. Ver docs/API_GATEWAY.md. Limpe cache (Ctrl+Shift+R).';
+          return 'HTTP 404: o backend não tem esta rota (código antigo ou serviço não reiniciado). Abra no browser /api/gateway/ping — se também for 404, no servidor: atualize /var/www/applyfy e sudo systemctl restart applyfy-painel. Ver docs/API_GATEWAY.md. Limpe cache (Ctrl+Shift+R).';
         }
         return 'HTTP ' + status + ': resposta HTML em vez de JSON (proxy ou rota incorrecta).';
       }
@@ -363,6 +365,105 @@
     }
 
     var gwProdPage = 1;
+    var gwProdSortCol = null;
+    var gwProdSortAsc = true;
+    function gwProdSortVal(p, col) {
+      if (col === 'tags') {
+        if (!p.tags || !p.tags.length) return '';
+        return p.tags
+          .map(function (t) {
+            return t.name || t.id || '';
+          })
+          .join(', ')
+          .toLowerCase();
+      }
+      var v = p[col];
+      if (col === 'id' || col === 'documentsCount' || col === 'clientCount' || col === 'transactionsCount') {
+        return v != null && !isNaN(Number(v)) ? Number(v) : NaN;
+      }
+      return (v == null ? '' : String(v)).toLowerCase();
+    }
+    function renderGwProdGatewayTbody() {
+      var items = GW_LAST_ITEMS.slice();
+      if (gwProdSortCol) {
+        var col = gwProdSortCol;
+        var asc = gwProdSortAsc;
+        var mult = asc ? 1 : -1;
+        var typ = document.querySelector('#gwProdTable th[data-col="' + col + '"]');
+        var ttyp = typ ? typ.getAttribute('data-type') : 'text';
+        items.sort(function (a, b) {
+          var va = gwProdSortVal(a, col);
+          var vb = gwProdSortVal(b, col);
+          if (ttyp === 'num') {
+            if (isNaN(va) && isNaN(vb)) return 0;
+            if (isNaN(va)) return mult * 1;
+            if (isNaN(vb)) return mult * -1;
+            return mult * (va - vb);
+          }
+          return mult * String(va).localeCompare(String(vb), 'pt-BR');
+        });
+      }
+      var tbody = document.getElementById('gwProdTbody');
+      tbody.innerHTML = items
+        .map(function (p, idx) {
+          var origIx = GW_LAST_ITEMS.indexOf(p);
+          if (origIx < 0) origIx = idx;
+          var id = String(p.id || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+          var idShort = id.length > 14 ? id.slice(0, 12) + '…' : id;
+          var nome = gwEsc(p.displayName || p.name || '–');
+          var em = gwEsc(p.email || '–');
+          var tel = gwEsc(p.phone || '–');
+          var st = gwEsc(p.status || '–');
+          var dc = p.documentsCount != null ? String(p.documentsCount) : '–';
+          var cc = p.clientCount != null ? String(p.clientCount) : '–';
+          var tc = p.transactionsCount != null ? String(p.transactionsCount) : '–';
+          var kyc = gwEsc(p.kycStatus || '–');
+          var bds = gwEsc(p.bankDataStatus || '–');
+          var tagsCell = renderTagsHtml(p.tags);
+          return (
+            '<tr><td title="' +
+            gwEsc(id) +
+            '"><code>' +
+            gwEsc(idShort) +
+            '</code></td><td>' +
+            nome +
+            '</td><td><code style="font-size:0.8em;">' +
+            em +
+            '</code></td><td>' +
+            tel +
+            '</td><td>' +
+            st +
+            '</td><td class="num">' +
+            gwEsc(dc) +
+            '</td><td class="num">' +
+            gwEsc(cc) +
+            '</td><td class="num">' +
+            gwEsc(tc) +
+            '</td><td>' +
+            kyc +
+            '</td><td>' +
+            bds +
+            '</td><td style="max-width:10rem;">' +
+            tagsCell +
+            '</td><td><button type="button" class="btn btn-secondary btn-det" data-i="' +
+            origIx +
+            '">Ver detalhe</button></td></tr>'
+          );
+        })
+        .join('');
+      tbody.querySelectorAll('.btn-det').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var i = parseInt(this.getAttribute('data-i'), 10);
+          if (!isNaN(i)) showProducerFromList(i);
+        });
+      });
+      document.querySelectorAll('#gwProdTable th[data-col]').forEach(function (th) {
+        var dc = th.getAttribute('data-col');
+        th.classList.toggle('sorted', dc === gwProdSortCol);
+        var icon = th.querySelector('.sort-icon');
+        if (icon) icon.textContent = dc === gwProdSortCol ? (gwProdSortAsc ? '↑' : '↓') : '↕';
+      });
+    }
 
     function setNextPrevState() {
       var pag = GW_LAST_PAG || {};
@@ -403,6 +504,8 @@
           GW_LAST_PAG = pag;
           var items = d.items || [];
           GW_LAST_ITEMS = items;
+          gwProdSortCol = null;
+          gwProdSortAsc = true;
           msg.textContent =
             'pagination: page=' + (pag.page != null ? pag.page : '—') +
             ', pageSize=' + (pag.pageSize != null ? pag.pageSize : '—') +
@@ -415,27 +518,7 @@
             setNextPrevState();
             return;
           }
-          tbody.innerHTML = items.map(function(p, idx) {
-            var id = String(p.id || '').replace(/</g, '&lt;').replace(/"/g, '&quot;');
-            var idShort = id.length > 14 ? id.slice(0, 12) + '…' : id;
-            var nome = gwEsc(p.displayName || p.name || '–');
-            var em = gwEsc(p.email || '–');
-            var tel = gwEsc(p.phone || '–');
-            var st = gwEsc(p.status || '–');
-            var dc = p.documentsCount != null ? String(p.documentsCount) : '–';
-            var cc = p.clientCount != null ? String(p.clientCount) : '–';
-            var tc = p.transactionsCount != null ? String(p.transactionsCount) : '–';
-            var kyc = gwEsc(p.kycStatus || '–');
-            var bds = gwEsc(p.bankDataStatus || '–');
-            var tagsCell = renderTagsHtml(p.tags);
-            return '<tr><td title="' + gwEsc(id) + '"><code>' + gwEsc(idShort) + '</code></td><td>' + nome + '</td><td><code style="font-size:0.8em;">' + em + '</code></td><td>' + tel + '</td><td>' + st + '</td><td class="num">' + gwEsc(dc) + '</td><td class="num">' + gwEsc(cc) + '</td><td class="num">' + gwEsc(tc) + '</td><td>' + kyc + '</td><td>' + bds + '</td><td style="max-width:10rem;">' + tagsCell + '</td><td><button type="button" class="btn btn-secondary btn-det" data-i="' + idx + '">Ver detalhe</button></td></tr>';
-          }).join('');
-          tbody.querySelectorAll('.btn-det').forEach(function(b) {
-            b.addEventListener('click', function() {
-              var i = parseInt(this.getAttribute('data-i'), 10);
-              if (!isNaN(i)) showProducerFromList(i);
-            });
-          });
+          renderGwProdGatewayTbody();
           setNextPrevState();
         })
         .catch(function(e) {
@@ -484,6 +567,69 @@
       });
     }
 
+    document.getElementById('gwProdTable').querySelector('thead').addEventListener('click', function (e) {
+      var th = e.target.closest('th[data-col]');
+      if (!th) return;
+      var col = th.getAttribute('data-col');
+      if (gwProdSortCol === col) gwProdSortAsc = !gwProdSortAsc;
+      else {
+        gwProdSortCol = col;
+        gwProdSortAsc = ApplyfyTable.firstSortAsc(th.getAttribute("data-type") || "text");
+      }
+      renderGwProdGatewayTbody();
+    });
+    function exportGwProdVista() {
+      if (!GW_LAST_ITEMS.length) return null;
+      var items = GW_LAST_ITEMS.slice();
+      if (gwProdSortCol) {
+        var col = gwProdSortCol;
+        var asc = gwProdSortAsc;
+        var mult = asc ? 1 : -1;
+        var typ = document.querySelector('#gwProdTable th[data-col="' + col + '"]');
+        var ttyp = typ ? typ.getAttribute('data-type') : 'text';
+        items.sort(function (a, b) {
+          var va = gwProdSortVal(a, col);
+          var vb = gwProdSortVal(b, col);
+          if (ttyp === 'num') {
+            if (isNaN(va) && isNaN(vb)) return 0;
+            if (isNaN(va)) return mult * 1;
+            if (isNaN(vb)) return mult * -1;
+            return mult * (va - vb);
+          }
+          return mult * String(va).localeCompare(String(vb), 'pt-BR');
+        });
+      }
+      var headers = ['id', 'displayName', 'email', 'phone', 'status', 'documentsCount', 'clientCount', 'transactionsCount', 'kycStatus', 'bankDataStatus', 'tags'];
+      var rows = items.map(function (p) {
+        var tagStr =
+          !p.tags || !p.tags.length
+            ? ''
+            : p.tags
+                .map(function (t) {
+                  return t.name || t.id || '';
+                })
+                .join(', ');
+        return [
+          p.id,
+          p.displayName || p.name || '',
+          p.email || '',
+          p.phone || '',
+          p.status || '',
+          p.documentsCount,
+          p.clientCount,
+          p.transactionsCount,
+          p.kycStatus || '',
+          p.bankDataStatus || '',
+          tagStr,
+        ];
+      });
+      return { headers: headers, rows: rows };
+    }
+    document.getElementById('btnGwProdXlsx').addEventListener('click', function () {
+      var o = exportGwProdVista();
+      if (!o) return;
+      ApplyfyTable.exportXLSX(o.headers, o.rows, 'produtores_api_vista.xlsx', 'Produtores');
+    });
     document.getElementById('btnGwProdCarregar').addEventListener('click', function() { gwProdPage = 1; loadProdutoresGateway(); });
     document.getElementById('btnGwProdPrev').addEventListener('click', function() { if (gwProdPage > 1) { gwProdPage--; loadProdutoresGateway(); } });
     document.getElementById('btnGwProdNext').addEventListener('click', function() {

@@ -4,12 +4,14 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
+  <link rel="icon" href="/static/logo/Icone.png?v=2" type="image/png">
+  <link rel="apple-touch-icon" href="/static/logo/Icone.png?v=2">
   <title>Comercial | Applyfy</title>
   <link rel="manifest" href="/static/manifest.json">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/painel-theme.css">
+  <link rel="stylesheet" href="/static/painel-theme.css?v=gold7">
   <style>
     .comercial-filtros { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center; margin-bottom: 1rem; }
     .comercial-filtros label { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.9rem; }
@@ -26,7 +28,7 @@
 <body data-active="/comercial">
   <div class="app-shell" id="app-shell">
     <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <img src="/static/logo/Icone.png?v=2" alt="" class="sidebar-toggle__icon" decoding="async" />
     </button>
     <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
     <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
@@ -37,16 +39,16 @@
         </div>
       </header>
       <main class="main-content">
+        <p class="text-muted" style="margin:0 0 0.75rem;line-height:1.5;max-width:40rem;">Carteira comercial: veja produtores e atribua ou altere o vendedor responsável.</p>
         <div class="page-header">
           <div>
             <p class="last-run" id="lastRun">Carregando…</p>
           </div>
           <div class="actions">
             <a href="/api/exportar?formato=xlsx" class="btn btn-primary" download>Exportar XLSX</a>
-            <a href="/api/exportar?formato=csv" class="btn btn-secondary" download>Exportar CSV</a>
           </div>
         </div>
-        <p id="noDbWarning" class="warn-banner" hidden>Sem PostgreSQL: as atribuições de vendedor ficam só neste navegador (localStorage). Com <code>DATABASE_URL</code> a equipa partilha a mesma carteira.</p>
+        <p id="noDbWarning" class="warn-banner" hidden>Sem base de dados no servidor, as atribuições de vendedor ficam só neste navegador. Com base de dados ativa, toda a equipa vê a mesma carteira.</p>
         <div class="comercial-filtros card" style="padding:0.75rem 1rem;">
           <label>Meu nome (filtro)
             <input type="text" id="meuNome" autocomplete="name" placeholder="Ex.: Maria" />
@@ -65,7 +67,7 @@
                   <th data-col="Email" data-type="text">Email <span class="sort-icon">↕</span></th>
                   <th data-col="vendedor" data-type="text">Vendedor <span class="sort-icon">↕</span></th>
                   <th data-col="Vendas líquidas" data-type="num" class="num">Vendas líquidas <span class="sort-icon">↕</span></th>
-                  <th class="num">Meta</th>
+                  <th data-col="Meta" data-type="num" class="num">Meta <span class="sort-icon">↕</span></th>
                   <th data-col="_pct" data-type="num" class="num">% meta <span class="sort-icon">↕</span></th>
                 </tr>
               </thead>
@@ -78,7 +80,8 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js?v=6" defer></script>
+  <script src="/static/painel-shell.js?v=28" defer></script>
+  <script src="/static/table-utils.js?v=3"></script>
   <script>
     var dadosAtuais = [];
     var dadosFonte = [];
@@ -232,9 +235,9 @@
       var type = sortTypeStored;
       var mult = sortAsc ? 1 : -1;
       var sorted = dadosAtuais.slice().sort(function(a, b) {
-        var va = col === 'vendedor' ? (a.vendedor || '') : (a[col] !== undefined ? a[col] : '');
-        var vb = col === 'vendedor' ? (b.vendedor || '') : (b[col] !== undefined ? b[col] : '');
-        if (type === 'num' || col === '_pct') {
+        var va = col === 'vendedor' ? (a.vendedor || '') : col === 'Meta' ? META_VALOR : (a[col] !== undefined ? a[col] : '');
+        var vb = col === 'vendedor' ? (b.vendedor || '') : col === 'Meta' ? META_VALOR : (b[col] !== undefined ? b[col] : '');
+        if (type === 'num' || col === '_pct' || col === 'Meta') {
           va = Number(va) || 0;
           vb = Number(vb) || 0;
           return mult * (va - vb);
@@ -254,13 +257,13 @@
 
     function sortData(col, type) {
       if (sortCol === col) sortAsc = !sortAsc;
-      else { sortCol = col; sortAsc = true; }
+      else { sortCol = col; sortAsc = ApplyfyTable.firstSortAsc(type); }
       sortTypeStored = type || 'text';
       var mult = sortAsc ? 1 : -1;
       var sorted = dadosAtuais.slice().sort(function(a, b) {
-        var va = col === 'vendedor' ? (a.vendedor || '') : (a[col] !== undefined ? a[col] : '');
-        var vb = col === 'vendedor' ? (b.vendedor || '') : (b[col] !== undefined ? b[col] : '');
-        if (type === 'num' || col === '_pct') {
+        var va = col === 'vendedor' ? (a.vendedor || '') : col === 'Meta' ? META_VALOR : (a[col] !== undefined ? a[col] : '');
+        var vb = col === 'vendedor' ? (b.vendedor || '') : col === 'Meta' ? META_VALOR : (b[col] !== undefined ? b[col] : '');
+        if (type === 'num' || col === '_pct' || col === 'Meta') {
           va = Number(va) || 0;
           vb = Number(vb) || 0;
           return mult * (va - vb);

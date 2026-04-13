@@ -64,6 +64,8 @@ def upsert_items_into_facts(items: list) -> int:
         if fact:
             db.upsert_tx_fact(fact)
             n += 1
+    if n:
+        db.run_backfill_tx_facts_from_webhook_payloads()
     return n
 
 

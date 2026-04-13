@@ -53,7 +53,7 @@ Alterou `applyfy-screens.ts`? Faça **rebuild** do Hub para os JWT refletirem os
 ## Problemas (404 em `/api/gateway/producers`)
 
 1. **Teste sem login:** abra `GET /api/gateway/ping` — deve devolver JSON `{"ok": true, "gateway": "admin-proxy", ...}`.
-   - **404 também aqui:** o processo HTTP (Gunicorn) não está a usar o `app.py` actual. No servidor: `cd /var/www/applyfy`, actualize o código, depois `sudo systemctl restart applyfy-painel` (ou o nome do unit em `applyfy-painel.service`).
+   - **404 também aqui:** o processo HTTP (Gunicorn) não está a usar o `app.py` atual. No servidor: `cd /var/www/applyfy`, atualize o código, depois `sudo systemctl restart applyfy-painel` (ou o nome do unit em `applyfy-painel.service`).
    - **`/api/gateway/ping` OK mas `/api/gateway/producers` 404:** situação anómala; confira se não há typo no path e se não há outro vhost Nginx a responder por `applyfy.northempresarial.com`.
 2. **502 / timeout:** confira `APPLYFY_PUBLIC_KEY`, `APPLYFY_SECRET_KEY` e `APPLYFY_API_TIMEOUT_LIST` no `.env`.
 3. **401 / 403:** sessão Hub ou JWT sem permissão ao ecrã **Consultar produtores** (`/produtores` / prefixos API em `applyfy_screens.py`).

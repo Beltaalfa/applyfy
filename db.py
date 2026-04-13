@@ -3,10 +3,13 @@
 import hashlib
 import os
 import json
+from collections import defaultdict
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 
 import config
+
+_DEBUG_UPSERT_H6_LOGS = 0
 
 
 def get_database_url() -> str | None:
@@ -125,9 +128,23 @@ def init_db():
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             );
         """)
+        try:
+            cur.execute(
+                "ALTER TABLE applyfy_tx_facts ADD COLUMN IF NOT EXISTS acquirer TEXT;"
+            )
+            cur.execute(
+                "ALTER TABLE applyfy_tx_facts ADD COLUMN IF NOT EXISTS payment_method TEXT;"
+            )
+        except Exception:
+            pass
         cur.execute(
             "CREATE INDEX IF NOT EXISTS idx_applyfy_tx_facts_email_day ON applyfy_tx_facts (lower(producer_email), tx_day);"
         )
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_applyfy_tx_facts_tx_day ON applyfy_tx_facts (tx_day);")
+        try:
+            run_backfill_tx_facts_from_webhook_payloads()
+        except Exception:
+            pass
         cur.execute("""
             CREATE TABLE IF NOT EXISTS applyfy_sync_state (
                 scope TEXT PRIMARY KEY,
@@ -513,9 +530,81 @@ def insert_webhook_transaction(transaction_id, event, offer_code, producer_id, p
             return "error", str(e)[:500]
 
 
+def _fetch_acquirer_payment_from_last_webhook_row(cur, transaction_id: str) -> tuple[str | None, str | None]:
+    """Último evento em ``applyfy_transactions`` por ``transaction_id`` (mesma lógica do dashboard webhook)."""
+    cur.execute(
+        """
+        SELECT
+          COALESCE(
+            NULLIF(TRIM(payload#>>'{transaction,acquirer}'), ''),
+            NULLIF(TRIM(payload#>>'{transaction,acquirerName}'), ''),
+            NULLIF(TRIM(payload->'transaction'->'acquirer'->>'name'), ''),
+            NULLIF(TRIM(payload#>>'{transaction,gateway}'), '')
+          ),
+          COALESCE(
+            NULLIF(UPPER(TRIM(payload->'transaction'->>'paymentMethod')), ''),
+            NULLIF(UPPER(TRIM(payload->'transaction'->>'payment_method')), '')
+          )
+        FROM applyfy_transactions
+        WHERE btrim(transaction_id) = btrim(%s)
+        ORDER BY received_at DESC NULLS LAST
+        LIMIT 1;
+        """,
+        (transaction_id,),
+    )
+    r = cur.fetchone()
+    if not r:
+        return None, None
+    a = (r[0] or "").strip() or None
+    p = (r[1] or "").strip() or None
+    return a, p
+
+
+def run_backfill_tx_facts_from_webhook_payloads() -> None:
+    """Preenche ``acquirer`` / ``payment_method`` em factos a partir do último payload por ``transaction_id``."""
+    if not get_database_url():
+        return
+    try:
+        with cursor() as cur:
+            cur.execute(
+                """
+                UPDATE applyfy_tx_facts f SET acquirer = x.a
+                FROM (
+                    SELECT DISTINCT ON (btrim(transaction_id))
+                        btrim(transaction_id) AS tid,
+                        NULLIF(TRIM(payload->'transaction'->>'acquirer'), '') AS a
+                    FROM applyfy_transactions
+                    WHERE transaction_id IS NOT NULL AND btrim(COALESCE(transaction_id, '')) <> ''
+                    ORDER BY btrim(transaction_id), received_at DESC
+                ) x
+                WHERE btrim(f.transaction_id) = x.tid
+                  AND (f.acquirer IS NULL OR btrim(f.acquirer) = '')
+                  AND x.a IS NOT NULL;
+                """
+            )
+            cur.execute(
+                """
+                UPDATE applyfy_tx_facts f SET payment_method = x.p
+                FROM (
+                    SELECT DISTINCT ON (btrim(transaction_id))
+                        btrim(transaction_id) AS tid,
+                        NULLIF(UPPER(TRIM(payload->'transaction'->>'paymentMethod')), '') AS p
+                    FROM applyfy_transactions
+                    WHERE transaction_id IS NOT NULL AND btrim(COALESCE(transaction_id, '')) <> ''
+                    ORDER BY btrim(transaction_id), received_at DESC
+                ) x
+                WHERE btrim(f.transaction_id) = x.tid
+                  AND (f.payment_method IS NULL OR btrim(f.payment_method) = '')
+                  AND x.p IS NOT NULL;
+                """
+            )
+    except Exception:
+        pass
+
+
 def upsert_tx_fact(fact: dict) -> None:
     """
-    Insere ou actualiza um facto de transação (webhook ou api_sync).
+    Insere ou atualiza um fato de transação (webhook ou api_sync).
     Se já existir fact com source=api_sync, não sobrescreve com webhook.
     """
     if not get_database_url():
@@ -529,11 +618,52 @@ def upsert_tx_fact(fact: dict) -> None:
     vn = float(fact.get("vendas_net") or 0)
     cb = float(fact.get("chargeback") or 0)
     src = (fact.get("source") or "webhook").strip() or "webhook"
+    acq = (fact.get("acquirer") or fact.get("acquirer_raw") or "").strip() or None
+    pm = (fact.get("payment_method") or fact.get("paymentMethod") or "").strip() or None
+    if pm:
+        pm = pm.upper()[:64]
+    if acq:
+        acq = acq[:128]
+    wa, wp = None, None
     with cursor() as cur:
+        if not acq or not pm:
+            wa, wp = _fetch_acquirer_payment_from_last_webhook_row(cur, txid)
+            if not acq and wa:
+                acq = wa[:128]
+            if not pm and wp:
+                pm = wp.upper()[:64]
+            # #region agent log
+            global _DEBUG_UPSERT_H6_LOGS
+            try:
+                if (
+                    _DEBUG_UPSERT_H6_LOGS < 6
+                    and (fact.get("source") or "") == "api_sync"
+                    and wa
+                    and not (fact.get("acquirer") or "").strip()
+                ):
+                    _DEBUG_UPSERT_H6_LOGS += 1
+                    import time as _time
+
+                    _pl = {
+                        "sessionId": "d1495d",
+                        "hypothesisId": "H6",
+                        "location": "db.py:upsert_tx_fact",
+                        "message": "acquirer preenchido a partir do último webhook (API veio vazio)",
+                        "data": {"transaction_id": txid[:40], "acquirer_webhook": wa[:64]},
+                        "timestamp": int(_time.time() * 1000),
+                    }
+                    with open("/var/www/.cursor/debug-d1495d.log", "a", encoding="utf-8") as _df:
+                        _df.write(json.dumps(_pl, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
         cur.execute(
             """
-            INSERT INTO applyfy_tx_facts (transaction_id, producer_email, tx_day, vendas_net, chargeback, source, updated_at)
-            VALUES (%s, %s, %s, %s, %s, %s, NOW())
+            INSERT INTO applyfy_tx_facts (
+                transaction_id, producer_email, tx_day, vendas_net, chargeback, source,
+                acquirer, payment_method, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, NOW())
             ON CONFLICT (transaction_id) DO UPDATE SET
               producer_email = EXCLUDED.producer_email,
               tx_day = EXCLUDED.tx_day,
@@ -543,12 +673,14 @@ def upsert_tx_fact(fact: dict) -> None:
                 WHEN applyfy_tx_facts.source = 'api_sync' AND EXCLUDED.source = 'webhook' THEN applyfy_tx_facts.source
                 ELSE EXCLUDED.source
               END,
+              acquirer = COALESCE(NULLIF(EXCLUDED.acquirer, ''), applyfy_tx_facts.acquirer),
+              payment_method = COALESCE(NULLIF(EXCLUDED.payment_method, ''), applyfy_tx_facts.payment_method),
               updated_at = CASE
                 WHEN applyfy_tx_facts.source = 'api_sync' AND EXCLUDED.source = 'webhook' THEN applyfy_tx_facts.updated_at
                 ELSE NOW()
               END;
             """,
-            (txid, email, day, vn, cb, src),
+            (txid, email, day, vn, cb, src, acq, pm),
         )
 
 
@@ -606,6 +738,1282 @@ def daily_series_from_tx_facts(email: str, d_from: str, d_to: str) -> list[dict]
         )
         cur_d += timedelta(days=1)
     return out
+
+
+def dashboard_latest_saldos_run_at():
+    """Último timestamp de export em saldos_historico, ou None."""
+    if not get_database_url():
+        return None
+    init_db()
+    with cursor() as cur:
+        cur.execute("SELECT MAX(run_at) FROM saldos_historico;")
+        r = cur.fetchone()
+    if not r or r[0] is None:
+        return None
+    t = r[0]
+    return t.isoformat() if hasattr(t, "isoformat") else str(t)
+
+
+def dashboard_ranking_saldos_latest(limit: int = 15, allowed_emails: list[str] | None = None):
+    """
+    Ranking no último run_at por saldo_disponivel descendente.
+    allowed_emails: se definido, só produtores cujo email normalizado está na lista (vendedor comercial).
+    Retorna { run_at, rows, totals }.
+    """
+    empty_totals = {
+        "disponivel_sum": 0.0,
+        "vendas_liq_sum": 0.0,
+        "count": 0,
+        "top_n_disponivel_sum": 0.0,
+        "concentration_top_n_pct": 0.0,
+    }
+    if not get_database_url():
+        return {"run_at": None, "rows": [], "totals": empty_totals}
+    init_db()
+    lim = min(max(int(limit), 1), 100)
+    norm_list = None
+    if allowed_emails is not None:
+        norm_list = list({_normalize_producer_email(e) for e in allowed_emails if e and _normalize_producer_email(e)})
+        if not norm_list:
+            return {"run_at": None, "rows": [], "totals": empty_totals}
+    email_filter = ""
+    ef_params: list = []
+    if norm_list:
+        email_filter = " AND lower(trim(email)) = ANY(%s) "
+        ef_params = [norm_list]
+    with cursor() as cur:
+        cur.execute(f"SELECT MAX(run_at) FROM saldos_historico WHERE 1=1 {email_filter};", ef_params or [])
+        r = cur.fetchone()
+        if not r or r[0] is None:
+            return {"run_at": None, "rows": [], "totals": empty_totals}
+        run_at = r[0]
+        cur.execute(
+            f"""
+            SELECT COALESCE(SUM(saldo_disponivel), 0), COALESCE(SUM(vendas_liquidas), 0), COUNT(*)
+            FROM saldos_historico WHERE run_at = %s {email_filter};
+            """,
+            (run_at, *(ef_params[0] if ef_params else [])),
+        )
+        tr = cur.fetchone()
+        disponivel_sum = float(tr[0] or 0)
+        vendas_liq_sum = float(tr[1] or 0)
+        count_all = int(tr[2] or 0)
+        cur.execute(
+            f"""
+            SELECT email, nome, saldo_pendente, saldo_retido, saldo_disponivel, total_sacado, vendas_liquidas
+            FROM saldos_historico
+            WHERE run_at = %s {email_filter}
+            ORDER BY saldo_disponivel DESC NULLS LAST
+            LIMIT %s;
+            """,
+            (run_at, *(ef_params[0] if ef_params else []), lim),
+        )
+        rows = cur.fetchall()
+    ra = run_at.isoformat() if hasattr(run_at, "isoformat") else str(run_at)
+    top_disp = sum(float(x[4] or 0) for x in rows)
+    conc = (top_disp / disponivel_sum * 100.0) if disponivel_sum > 0 else 0.0
+    return {
+        "run_at": ra,
+        "rows": [
+            {
+                "email": x[0],
+                "nome": x[1] or x[0],
+                "saldo_pendente": float(x[2] or 0),
+                "saldo_retido": float(x[3] or 0),
+                "saldo_disponivel": float(x[4] or 0),
+                "total_sacado": float(x[5] or 0),
+                "vendas_liquidas": float(x[6] or 0),
+            }
+            for x in rows
+        ],
+        "totals": {
+            "disponivel_sum": round(disponivel_sum, 2),
+            "vendas_liq_sum": round(vendas_liq_sum, 2),
+            "count": count_all,
+            "top_n_disponivel_sum": round(top_disp, 2),
+            "concentration_top_n_pct": round(conc, 2),
+        },
+    }
+
+
+def dashboard_ranking_vendas_snapshot_latest(
+    limit: int = 15,
+    allowed_emails: list[str] | None = None,
+    api_period_from: str | None = None,
+    api_period_to: str | None = None,
+):
+    """
+    Resumo do último snapshot de saldos (run_at, totais globais) +
+    top N produtores por **soma de vendas_net** em applyfy_tx_facts no intervalo
+    [api_period_from, api_period_to] — mesmo conceito de «Total vendas (API)» noutras telas.
+
+    Se api_period_* não for passado, recua para o ranking antigo por vendas_liquidas do snapshot.
+    """
+    empty_totals = {
+        "disponivel_sum": 0.0,
+        "vendas_liq_sum": 0.0,
+        "count": 0,
+        "top_n_vendas_sum": 0.0,
+        "concentration_top_n_vendas_pct": 0.0,
+    }
+    if not get_database_url():
+        return {"run_at": None, "rows": [], "totals": empty_totals}
+    init_db()
+    lim = min(max(int(limit), 1), 100)
+    norm_list = None
+    if allowed_emails is not None:
+        norm_list = list({_normalize_producer_email(e) for e in allowed_emails if e and _normalize_producer_email(e)})
+        if not norm_list:
+            return {"run_at": None, "rows": [], "totals": empty_totals}
+    email_filter = ""
+    ef_params: list = []
+    if norm_list:
+        email_filter = " AND lower(trim(email)) = ANY(%s) "
+        ef_params = [norm_list]
+    with cursor() as cur:
+        cur.execute(f"SELECT MAX(run_at) FROM saldos_historico WHERE 1=1 {email_filter};", ef_params or [])
+        r = cur.fetchone()
+        if not r or r[0] is None:
+            return {"run_at": None, "rows": [], "totals": empty_totals}
+        run_at = r[0]
+        cur.execute(
+            f"""
+            SELECT COALESCE(SUM(saldo_disponivel), 0), COALESCE(SUM(vendas_liquidas), 0), COUNT(*)
+            FROM saldos_historico WHERE run_at = %s {email_filter};
+            """,
+            (run_at, *(ef_params[0] if ef_params else [])),
+        )
+        tr = cur.fetchone()
+        disponivel_sum = float(tr[0] or 0)
+        vendas_liq_sum = float(tr[1] or 0)
+        count_all = int(tr[2] or 0)
+    ra = run_at.isoformat() if hasattr(run_at, "isoformat") else str(run_at)
+
+    use_api = bool(
+        api_period_from
+        and api_period_to
+        and len(str(api_period_from).strip()) >= 10
+        and len(str(api_period_to).strip()) >= 10
+    )
+    if use_api:
+        d0 = api_period_from[:10]
+        d1 = api_period_to[:10]
+        extra = ""
+        params: list = [d0, d1, lim]
+        if allowed_emails is not None:
+            norm = list({_normalize_producer_email(e) for e in allowed_emails if e and _normalize_producer_email(e)})
+            if not norm:
+                return {"run_at": ra, "rows": [], "totals": {**empty_totals, "disponivel_sum": round(disponivel_sum, 2), "vendas_liq_sum": round(vendas_liq_sum, 2), "count": count_all}}
+            extra = " AND lower(trim(producer_email)) = ANY(%s) "
+            params = [d0, d1, norm, lim]
+        with cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT lower(trim(producer_email)), COALESCE(SUM(vendas_net), 0)
+                FROM applyfy_tx_facts
+                WHERE tx_day >= %s::date AND tx_day <= %s::date
+                {extra}
+                GROUP BY 1
+                ORDER BY SUM(vendas_net) DESC NULLS LAST
+                LIMIT %s;
+                """,
+                tuple(params),
+            )
+            raw = cur.fetchall()
+        if not raw:
+            period_tot = dashboard_tx_facts_period_totals(d0, d1, allowed_emails)
+            vnet_all = float((period_tot or {}).get("vendas_net") or 0)
+            return {
+                "run_at": ra,
+                "rows": [],
+                "totals": {
+                    "disponivel_sum": round(disponivel_sum, 2),
+                    "vendas_liq_sum": round(vendas_liq_sum, 2),
+                    "count": count_all,
+                    "top_n_vendas_sum": 0.0,
+                    "concentration_top_n_vendas_pct": 0.0,
+                    "vendas_net_periodo": round(vnet_all, 2),
+                },
+            }
+        emails_norm = [r[0] for r in raw]
+        names: dict[str, str] = {}
+        with cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (lower(trim(email))) lower(trim(email)) AS em, nome
+                FROM saldos_historico
+                WHERE lower(trim(email)) = ANY(%s)
+                ORDER BY lower(trim(email)), run_at DESC;
+                """,
+                (emails_norm,),
+            )
+            for row in cur.fetchall():
+                names[row[0]] = (row[1] or row[0] or "").strip() or row[0]
+        rows_out = []
+        top_v = 0.0
+        for em, vn in raw:
+            vnv = float(vn or 0)
+            top_v += vnv
+            rows_out.append(
+                {
+                    "email": em,
+                    "nome": names.get(em) or em,
+                    "vendas_api": round(vnv, 2),
+                }
+            )
+        period_tot = dashboard_tx_facts_period_totals(d0, d1, allowed_emails)
+        vnet_all = float((period_tot or {}).get("vendas_net") or 0)
+        conc_v = (top_v / vnet_all * 100.0) if vnet_all > 0 else 0.0
+        return {
+            "run_at": ra,
+            "period": {"from": d0, "to": d1},
+            "rows": rows_out,
+            "totals": {
+                "disponivel_sum": round(disponivel_sum, 2),
+                "vendas_liq_sum": round(vendas_liq_sum, 2),
+                "count": count_all,
+                "top_n_vendas_sum": round(top_v, 2),
+                "concentration_top_n_vendas_pct": round(conc_v, 2),
+                "vendas_net_periodo": round(vnet_all, 2),
+            },
+        }
+
+    with cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT email, nome, saldo_pendente, saldo_retido, saldo_disponivel, total_sacado, vendas_liquidas
+            FROM saldos_historico
+            WHERE run_at = %s {email_filter}
+            ORDER BY vendas_liquidas DESC NULLS LAST, saldo_disponivel DESC NULLS LAST
+            LIMIT %s;
+            """,
+            (run_at, *(ef_params[0] if ef_params else []), lim),
+        )
+        rows = cur.fetchall()
+    top_v = sum(float(x[6] or 0) for x in rows)
+    conc_v = (top_v / vendas_liq_sum * 100.0) if vendas_liq_sum > 0 else 0.0
+    return {
+        "run_at": ra,
+        "rows": [
+            {
+                "email": x[0],
+                "nome": x[1] or x[0],
+                "saldo_pendente": float(x[2] or 0),
+                "saldo_retido": float(x[3] or 0),
+                "saldo_disponivel": float(x[4] or 0),
+                "total_sacado": float(x[5] or 0),
+                "vendas_liquidas": float(x[6] or 0),
+            }
+            for x in rows
+        ],
+        "totals": {
+            "disponivel_sum": round(disponivel_sum, 2),
+            "vendas_liq_sum": round(vendas_liq_sum, 2),
+            "count": count_all,
+            "top_n_vendas_sum": round(top_v, 2),
+            "concentration_top_n_vendas_pct": round(conc_v, 2),
+        },
+    }
+
+
+def dashboard_ranking_chargeback_period(
+    d_from: str, d_to: str, limit: int = 15, allowed_emails: list[str] | None = None
+):
+    """
+    Top N produtores por soma de chargeback em applyfy_tx_facts no intervalo [d_from, d_to].
+    Nomes via último registo em saldos_historico por email quando existir.
+    """
+    empty = {"period": {"from": d_from[:10], "to": d_to[:10]}, "rows": [], "chargeback_top_sum": 0.0}
+    if not get_database_url():
+        return empty
+    init_db()
+    lim = min(max(int(limit), 1), 100)
+    extra = ""
+    params: list = [d_from[:10], d_to[:10], lim]
+    if allowed_emails is not None:
+        norm = list({_normalize_producer_email(e) for e in allowed_emails if e and _normalize_producer_email(e)})
+        if not norm:
+            return empty
+        extra = " AND lower(trim(producer_email)) = ANY(%s) "
+        params = [d_from[:10], d_to[:10], norm, lim]
+    with cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT lower(trim(producer_email)), COALESCE(SUM(chargeback), 0)
+            FROM applyfy_tx_facts
+            WHERE tx_day >= %s::date AND tx_day <= %s::date
+            {extra}
+            GROUP BY 1
+            ORDER BY SUM(chargeback) DESC NULLS LAST
+            LIMIT %s;
+            """,
+            tuple(params),
+        )
+        raw = cur.fetchall()
+    if not raw:
+        return {
+            "period": {"from": d_from[:10], "to": d_to[:10]},
+            "rows": [],
+            "chargeback_top_sum": 0.0,
+        }
+    emails_norm = [r[0] for r in raw]
+    names: dict[str, str] = {}
+    with cursor() as cur:
+        cur.execute(
+            """
+            SELECT DISTINCT ON (lower(trim(email))) lower(trim(email)) AS em, nome
+            FROM saldos_historico
+            WHERE lower(trim(email)) = ANY(%s)
+            ORDER BY lower(trim(email)), run_at DESC;
+            """,
+            (emails_norm,),
+        )
+        for row in cur.fetchall():
+            names[row[0]] = (row[1] or row[0] or "").strip() or row[0]
+    rows_out = []
+    cb_top = 0.0
+    for em, cb in raw:
+        cbv = float(cb or 0)
+        cb_top += cbv
+        rows_out.append(
+            {
+                "email": em,
+                "nome": names.get(em) or em,
+                "chargeback": round(cbv, 2),
+            }
+        )
+    return {
+        "period": {"from": d_from[:10], "to": d_to[:10]},
+        "rows": rows_out,
+        "chargeback_top_sum": round(cb_top, 2),
+    }
+
+
+def dashboard_tx_facts_period_totals(d_from: str, d_to: str, producer_emails: list[str] | None = None) -> dict:
+    """Soma vendas_net e chargeback no intervalo; filtro opcional por produtores (lista normalizada)."""
+    if not get_database_url():
+        return {"vendas_net": 0.0, "chargeback": 0.0}
+    init_db()
+    extra = ""
+    params: list = [d_from[:10], d_to[:10]]
+    if producer_emails is not None:
+        norm = list({_normalize_producer_email(e) for e in producer_emails if e and _normalize_producer_email(e)})
+        if not norm:
+            return {"vendas_net": 0.0, "chargeback": 0.0}
+        extra = " AND lower(trim(producer_email)) = ANY(%s) "
+        params.append(norm)
+    with cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT COALESCE(SUM(vendas_net), 0), COALESCE(SUM(chargeback), 0)
+            FROM applyfy_tx_facts
+            WHERE tx_day >= %s::date AND tx_day <= %s::date
+            {extra}
+            """,
+            tuple(params),
+        )
+        r = cur.fetchone()
+    return {
+        "vendas_net": round(float(r[0] or 0), 2),
+        "chargeback": round(float(r[1] or 0), 2),
+    }
+
+
+def dashboard_produtores_atingiram_meta(
+    d_from: str, d_to: str, meta_val: float, producer_emails: list[str] | None = None
+) -> int:
+    """
+    Quantidade de produtores cuja soma de vendas_net no período é >= meta_val (mesma meta global para todos).
+    Respeita o filtro comercial (lista de e-mails) quando não é None.
+    """
+    if not get_database_url() or meta_val is None or float(meta_val) <= 0:
+        return 0
+    init_db()
+    meta_f = float(meta_val)
+    extra = ""
+    params: list = [d_from[:10], d_to[:10]]
+    if producer_emails is not None:
+        norm = list({_normalize_producer_email(e) for e in producer_emails if e and _normalize_producer_email(e)})
+        if not norm:
+            return 0
+        extra = " AND lower(trim(producer_email)) = ANY(%s) "
+        params.append(norm)
+    params.append(meta_f)
+    with cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT COUNT(*) FROM (
+                SELECT lower(trim(producer_email)) AS em
+                FROM applyfy_tx_facts
+                WHERE tx_day >= %s::date AND tx_day <= %s::date
+                {extra}
+                GROUP BY lower(trim(producer_email))
+                HAVING COALESCE(SUM(vendas_net), 0) >= %s
+            ) t;
+            """,
+            tuple(params),
+        )
+        row = cur.fetchone()
+    return int(row[0] or 0) if row else 0
+
+
+def dashboard_tx_facts_global_daily(d_from: str, d_to: str, producer_emails: list[str] | None = None) -> list[dict]:
+    """Série diária: soma vendas_net e chargeback por tx_day. producer_emails restringe aos produtores (None = todos)."""
+    if not get_database_url():
+        return []
+    init_db()
+    d0 = date.fromisoformat(d_from[:10])
+    d1 = date.fromisoformat(d_to[:10])
+    daily_vendas: dict[str, float] = {}
+    daily_cb: dict[str, float] = {}
+    extra = ""
+    params: list = [d_from[:10], d_to[:10]]
+    if producer_emails is not None:
+        norm = list({_normalize_producer_email(e) for e in producer_emails if e and _normalize_producer_email(e)})
+        if not norm:
+            out: list[dict] = []
+            cur_d = d0
+            while cur_d <= d1:
+                ks = cur_d.isoformat()
+                out.append({"date": ks, "vendas_net": 0.0, "chargeback": 0.0})
+                cur_d += timedelta(days=1)
+            return out
+        extra = " AND lower(trim(producer_email)) = ANY(%s) "
+        params.append(norm)
+    with cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT tx_day::text, COALESCE(SUM(vendas_net), 0), COALESCE(SUM(chargeback), 0)
+            FROM applyfy_tx_facts
+            WHERE tx_day >= %s::date AND tx_day <= %s::date
+            {extra}
+            GROUP BY tx_day ORDER BY tx_day;
+            """,
+            tuple(params),
+        )
+        for row in cur.fetchall():
+            daily_vendas[row[0]] = float(row[1])
+            daily_cb[row[0]] = float(row[2])
+    out: list[dict] = []
+    cur_d = d0
+    while cur_d <= d1:
+        ks = cur_d.isoformat()
+        out.append(
+            {
+                "date": ks,
+                "vendas_net": round(daily_vendas.get(ks, 0.0), 2),
+                "chargeback": round(daily_cb.get(ks, 0.0), 2),
+            }
+        )
+        cur_d += timedelta(days=1)
+    return out
+
+
+def _dashboard_vendas_email_filter_sql(allowed_emails: list[str] | None) -> tuple[str, list]:
+    """Cláusula AND extra + parâmetros para filtrar produtores (modo comercial)."""
+    if allowed_emails is None:
+        return "", []
+    norm = [_normalize_producer_email(e) for e in allowed_emails if e]
+    norm = [x for x in norm if x]
+    if not norm:
+        return " AND 1=0 ", []
+    return " AND lower(trim(produtor_email)) = ANY(%s) ", [norm]
+
+
+def _dashboard_venda_dia_sql(table_alias: str | None = None) -> str:
+    """
+    Data de referência (DATE) para filtros do dashboard em applyfy_vendas:
+    data da venda; se nula, data de pagamento, liberação ou última atualização.
+    Alinha o painel ao que o utilizador vê na lista de vendas quando data_venda vem vazia.
+    """
+    p = f"{table_alias}." if table_alias else ""
+    return (
+        f"COALESCE({p}data_venda::date, {p}data_pagamento::date, "
+        f"{p}data_liberacao::date, {p}data_atualizacao::date)"
+    )
+
+
+def _dashboard_venda_periodo_where_sql(table_alias: str | None = None) -> str:
+    """Cláusula WHERE … período [from, to] usando a data de referência do dashboard."""
+    vd = _dashboard_venda_dia_sql(table_alias)
+    return f"WHERE ({vd}) IS NOT NULL AND ({vd}) >= %s::date AND ({vd}) <= %s::date"
+
+
+def dashboard_vendas_aggregates(
+    date_from: str,
+    date_to: str,
+    allowed_producer_emails: list[str] | None = None,
+    top_limit: int = 10,
+):
+    """
+    Agregados em applyfy_vendas no período (data de referência: venda → pagamento → liberação → atualização).
+    allowed_producer_emails: se definido, restringe a esses emails (normalizados).
+    """
+    if not get_database_url():
+        return {
+            "kpis": {"count": 0, "valor_liquido_sum": 0.0, "valor_total_sum": 0.0},
+            "by_status": [],
+            "by_metodo": [],
+            "by_adquirente": [],
+            "top_produtos": [],
+            "top_estados": [],
+            "top_afiliados": [],
+        }
+    init_db()
+    tl = min(max(int(top_limit), 1), 50)
+    extra_sql, extra_params = _dashboard_vendas_email_filter_sql(allowed_producer_emails)
+    base_params = [date_from[:10], date_to[:10]] + extra_params
+
+    def _run_agg(sql: str, params: list) -> list[dict]:
+        with cursor() as cur:
+            cur.execute(sql, tuple(params))
+            return [{"label": r[0] or "(sem)", "total": float(r[1] or 0), "count": int(r[2] or 0)} for r in cur.fetchall()]
+
+    out = {"kpis": {"count": 0, "valor_liquido_sum": 0.0, "valor_total_sum": 0.0}, "by_status": [], "by_metodo": [], "by_adquirente": [], "top_produtos": [], "top_estados": [], "top_afiliados": []}
+    vw = _dashboard_venda_periodo_where_sql()
+    try:
+        with cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT COUNT(*),
+                       COALESCE(SUM(valor_liquido_produtor), 0),
+                       COALESCE(SUM(valor_total), 0)
+                FROM applyfy_vendas
+                {vw}
+                  {extra_sql};
+                """,
+                tuple(base_params),
+            )
+            kr = cur.fetchone()
+            out["kpis"] = {
+                "count": int(kr[0] or 0),
+                "valor_liquido_sum": round(float(kr[1] or 0), 2),
+                "valor_total_sum": round(float(kr[2] or 0), 2),
+            }
+    except Exception:
+        return out
+
+    q_status = f"""
+        SELECT COALESCE(NULLIF(trim(status_pagamento), ''), '(sem status)'),
+               COALESCE(SUM(valor_liquido_produtor), 0), COUNT(*)
+        FROM applyfy_vendas
+        {vw}
+          {extra_sql}
+        GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT {tl + 15};
+    """
+    q_metodo = f"""
+        SELECT COALESCE(NULLIF(trim(metodo_pagamento), ''), '(sem método)'),
+               COALESCE(SUM(valor_liquido_produtor), 0), COUNT(*)
+        FROM applyfy_vendas
+        {vw}
+          {extra_sql}
+        GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT {tl + 10};
+    """
+    q_adq = f"""
+        SELECT COALESCE(NULLIF(trim(adquirente), ''), '(sem adquirente)'),
+               COALESCE(SUM(valor_liquido_produtor), 0), COUNT(*)
+        FROM applyfy_vendas
+        {vw}
+          {extra_sql}
+        GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT {tl + 5};
+    """
+    q_prod = f"""
+        SELECT COALESCE(NULLIF(trim(produto_nome), ''), '(sem produto)'),
+               COALESCE(SUM(valor_liquido_produtor), 0), COUNT(*)
+        FROM applyfy_vendas
+        {vw}
+          {extra_sql}
+        GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT %s;
+    """
+    q_est = f"""
+        SELECT COALESCE(NULLIF(trim(estado), ''), '(sem UF)'),
+               COALESCE(SUM(valor_liquido_produtor), 0), COUNT(*)
+        FROM applyfy_vendas
+        {vw}
+          {extra_sql}
+        GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT %s;
+    """
+    q_aff = f"""
+        SELECT COALESCE(
+                 NULLIF(trim(afiliado_email), ''),
+                 NULLIF(trim(affiliate_code), ''),
+                 '(sem afiliado)'
+               ),
+               COALESCE(SUM(valor_liquido_produtor), 0), COUNT(*)
+        FROM applyfy_vendas
+        {vw}
+          {extra_sql}
+        GROUP BY 1 ORDER BY 2 DESC NULLS LAST LIMIT %s;
+    """
+    try:
+        out["by_status"] = _run_agg(q_status, list(base_params))
+        out["by_metodo"] = _run_agg(q_metodo, list(base_params))
+        out["by_adquirente"] = _run_agg(q_adq, list(base_params))
+        with cursor() as cur:
+            cur.execute(q_prod, tuple(base_params + [tl]))
+            out["top_produtos"] = [
+                {"label": r[0] or "(sem)", "total": float(r[1] or 0), "count": int(r[2] or 0)} for r in cur.fetchall()
+            ]
+            cur.execute(q_est, tuple(base_params + [tl]))
+            out["top_estados"] = [
+                {"label": r[0] or "(sem)", "total": float(r[1] or 0), "count": int(r[2] or 0)} for r in cur.fetchall()
+            ]
+            cur.execute(q_aff, tuple(base_params + [tl]))
+            out["top_afiliados"] = [
+                {"label": r[0] or "(sem)", "total": float(r[1] or 0), "count": int(r[2] or 0)} for r in cur.fetchall()
+            ]
+    except Exception:
+        pass
+    return out
+
+
+def dashboard_ticket_medio_diario(
+    date_from: str,
+    date_to: str,
+    allowed_producer_emails: list[str] | None = None,
+) -> dict:
+    """
+    Ticket médio por dia: soma(valor_liquido_produtor) / COUNT(*) por dia de referência
+    (venda → pagamento → liberação → atualização), alinhado a ``dashboard_vendas_aggregates``.
+    Inclui totais do período para o KPI (média global = soma líquida / nº de vendas).
+    """
+    empty_period = {"ticket_medio": None, "vendas_count": 0, "valor_liquido_sum": 0.0}
+    if not get_database_url():
+        return {"serie_diaria": [], "periodo": empty_period}
+    init_db()
+    d0 = date.fromisoformat(date_from[:10])
+    d1 = date.fromisoformat(date_to[:10])
+    extra_sql, extra_params = _dashboard_vendas_email_filter_sql(allowed_producer_emails)
+    base_params = [date_from[:10], date_to[:10]] + extra_params
+
+    if extra_sql.strip().startswith("AND 1=0"):
+        serie: list[dict] = []
+        cur_d = d0
+        while cur_d <= d1:
+            ks = cur_d.isoformat()
+            serie.append({"date": ks, "ticket_medio": None, "vendas_count": 0, "valor_liquido_sum": 0.0})
+            cur_d += timedelta(days=1)
+        return {"serie_diaria": serie, "periodo": empty_period}
+
+    vd = _dashboard_venda_dia_sql()
+    vw = _dashboard_venda_periodo_where_sql()
+    daily_sum: dict[str, float] = {}
+    daily_cnt: dict[str, int] = {}
+    period_count = 0
+    period_sum = 0.0
+    try:
+        with cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT ({vd})::text,
+                       COALESCE(SUM(valor_liquido_produtor), 0),
+                       COUNT(*)::int
+                FROM applyfy_vendas
+                {vw}
+                  {extra_sql}
+                GROUP BY ({vd})
+                ORDER BY 1;
+                """,
+                tuple(base_params),
+            )
+            for row in cur.fetchall():
+                ks = row[0]
+                daily_sum[ks] = float(row[1] or 0)
+                daily_cnt[ks] = int(row[2] or 0)
+            cur.execute(
+                f"""
+                SELECT COUNT(*),
+                       COALESCE(SUM(valor_liquido_produtor), 0)
+                FROM applyfy_vendas
+                {vw}
+                  {extra_sql}
+                """,
+                tuple(base_params),
+            )
+            pr = cur.fetchone()
+            period_count = int(pr[0] or 0)
+            period_sum = float(pr[1] or 0)
+    except Exception:
+        return {"serie_diaria": [], "periodo": empty_period}
+
+    ticket_period = round(period_sum / period_count, 2) if period_count > 0 else None
+
+    out_serie: list[dict] = []
+    cur_d = d0
+    while cur_d <= d1:
+        ks = cur_d.isoformat()
+        cn = daily_cnt.get(ks, 0)
+        sm = daily_sum.get(ks, 0.0)
+        tm = round(sm / cn, 2) if cn > 0 else None
+        out_serie.append(
+            {
+                "date": ks,
+                "ticket_medio": tm,
+                "vendas_count": cn,
+                "valor_liquido_sum": round(sm, 2),
+            }
+        )
+        cur_d += timedelta(days=1)
+
+    return {
+        "serie_diaria": out_serie,
+        "periodo": {
+            "ticket_medio": ticket_period,
+            "vendas_count": period_count,
+            "valor_liquido_sum": round(period_sum, 2),
+        },
+    }
+
+
+def dashboard_ticket_medio_tx_facts_diario(
+    date_from: str,
+    date_to: str,
+    producer_emails: list[str] | None = None,
+) -> dict:
+    """
+    Ticket médio a partir de ``applyfy_tx_facts``: por dia, média de vendas líquidas
+    por transação (SUM(vendas_net)/COUNT(*)). Mesmo filtro de produtores que ``dashboard_tx_facts_global_daily``.
+    Usado quando ``applyfy_vendas`` não tem linhas no período mas há movimento nos factos.
+    """
+    empty_period = {"ticket_medio": None, "vendas_count": 0, "valor_liquido_sum": 0.0}
+    if not get_database_url():
+        return {"serie_diaria": [], "periodo": empty_period}
+    init_db()
+    d0 = date.fromisoformat(date_from[:10])
+    d1 = date.fromisoformat(date_to[:10])
+    extra = ""
+    params: list = [date_from[:10], date_to[:10]]
+    if producer_emails is not None:
+        norm = list({_normalize_producer_email(e) for e in producer_emails if e and _normalize_producer_email(e)})
+        if not norm:
+            serie_empty: list[dict] = []
+            cur_de = d0
+            while cur_de <= d1:
+                ks = cur_de.isoformat()
+                serie_empty.append({"date": ks, "ticket_medio": None, "vendas_count": 0, "valor_liquido_sum": 0.0})
+                cur_de += timedelta(days=1)
+            return {"serie_diaria": serie_empty, "periodo": empty_period}
+        extra = " AND lower(trim(producer_email)) = ANY(%s) "
+        params.append(norm)
+
+    daily_sum: dict[str, float] = {}
+    daily_cnt: dict[str, int] = {}
+    period_count = 0
+    period_sum = 0.0
+    try:
+        with cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT tx_day::text,
+                       COALESCE(SUM(vendas_net), 0),
+                       COUNT(*)::int
+                FROM applyfy_tx_facts
+                WHERE tx_day >= %s::date AND tx_day <= %s::date
+                {extra}
+                GROUP BY tx_day
+                ORDER BY 1;
+                """,
+                tuple(params),
+            )
+            for row in cur.fetchall():
+                ks = row[0]
+                daily_sum[ks] = float(row[1] or 0)
+                daily_cnt[ks] = int(row[2] or 0)
+            cur.execute(
+                f"""
+                SELECT COUNT(*)::int,
+                       COALESCE(SUM(vendas_net), 0)
+                FROM applyfy_tx_facts
+                WHERE tx_day >= %s::date AND tx_day <= %s::date
+                {extra}
+                """,
+                tuple(params),
+            )
+            pr = cur.fetchone()
+            period_count = int(pr[0] or 0)
+            period_sum = float(pr[1] or 0)
+    except Exception:
+        return {"serie_diaria": [], "periodo": empty_period}
+
+    ticket_period = round(period_sum / period_count, 2) if period_count > 0 else None
+
+    out_serie: list[dict] = []
+    cur_d = d0
+    while cur_d <= d1:
+        ks = cur_d.isoformat()
+        cn = daily_cnt.get(ks, 0)
+        sm = daily_sum.get(ks, 0.0)
+        tm = round(sm / cn, 2) if cn > 0 else None
+        out_serie.append(
+            {
+                "date": ks,
+                "ticket_medio": tm,
+                "vendas_count": cn,
+                "valor_liquido_sum": round(sm, 2),
+            }
+        )
+        cur_d += timedelta(days=1)
+
+    return {
+        "serie_diaria": out_serie,
+        "periodo": {
+            "ticket_medio": ticket_period,
+            "vendas_count": period_count,
+            "valor_liquido_sum": round(period_sum, 2),
+        },
+    }
+
+
+def dashboard_metodo_adquirente_from_tx_facts_meta(
+    date_from: str,
+    date_to: str,
+    producer_emails: list[str] | None = None,
+) -> dict:
+    """
+    Agrega método e adquirente a partir das colunas ``payment_method`` e ``acquirer`` em
+    ``applyfy_tx_facts`` (preenchidas por sync API / upsert). Mesma forma de linhas que
+    ``dashboard_vendas_aggregates`` (label, total, count).
+    """
+    out: dict = {"by_metodo": [], "by_adquirente": []}
+    if not get_database_url():
+        return out
+    init_db()
+    extra = ""
+    params_base: list = [date_from[:10], date_to[:10]]
+    if producer_emails is not None:
+        norm = list({_normalize_producer_email(e) for e in producer_emails if e and _normalize_producer_email(e)})
+        if not norm:
+            return out
+        extra = " AND lower(trim(f.producer_email)) = ANY(%s) "
+        params_base.append(norm)
+
+    # #region agent log
+    try:
+        import time as _time
+
+        _payload = {
+            "sessionId": "d1495d",
+            "hypothesisId": "H2",
+            "location": "db.py:dashboard_metodo_adquirente_from_tx_facts_meta:entry",
+            "message": "tx_facts_meta agregação entrada",
+            "data": {"date_from": date_from[:10], "date_to": date_to[:10], "producer_filter": producer_emails is not None},
+            "timestamp": int(_time.time() * 1000),
+        }
+        with open("/var/www/.cursor/debug-d1495d.log", "a", encoding="utf-8") as _df:
+            _df.write(__import__("json").dumps(_payload, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+    # #endregion
+
+    try:
+        from applyfy_parser import _normalize_acquirer
+    except Exception:
+
+        def _normalize_acquirer(value):  # type: ignore[misc]
+            return (value or "").strip() or None
+
+    _facts_period_where = """
+        f.tx_day >= %s::date AND f.tx_day <= %s::date
+          AND (
+            COALESCE(f.vendas_net, 0) <> 0
+            OR COALESCE(f.chargeback, 0) <> 0
+            OR NULLIF(TRIM(f.acquirer), '') IS NOT NULL
+            OR NULLIF(TRIM(f.payment_method), '') IS NOT NULL
+          )
+    """
+    sql_metodo = f"""
+        SELECT COALESCE(
+                 NULLIF(UPPER(TRIM(f.payment_method)), ''),
+                 '(sem método)'
+               ),
+               COALESCE(SUM(f.vendas_net), 0),
+               COUNT(*)::int
+        FROM applyfy_tx_facts f
+        WHERE {_facts_period_where}
+          {extra}
+        GROUP BY 1
+        ORDER BY 2 DESC NULLS LAST
+        LIMIT 40;
+    """
+    sql_adq = f"""
+        SELECT COALESCE(
+                 NULLIF(TRIM(f.acquirer), ''),
+                 '(sem adquirente)'
+               ),
+               COALESCE(SUM(f.vendas_net), 0),
+               COUNT(*)::int
+        FROM applyfy_tx_facts f
+        WHERE {_facts_period_where}
+          {extra}
+        GROUP BY 1
+        ORDER BY 2 DESC NULLS LAST
+        LIMIT 40;
+    """
+    sql_n_acq = f"""
+        SELECT COUNT(*)::int
+        FROM applyfy_tx_facts f
+        WHERE {_facts_period_where}
+          AND NULLIF(TRIM(f.acquirer), '') IS NOT NULL
+          {extra}
+    """
+    try:
+        with cursor() as cur:
+            cur.execute(sql_metodo, tuple(params_base))
+            rows_m = cur.fetchall()
+            out["by_metodo"] = [
+                {"label": r[0] or "(sem método)", "total": float(r[1] or 0), "count": int(r[2] or 0)}
+                for r in rows_m
+            ]
+            cur.execute(sql_adq, tuple(params_base))
+            rows_a = cur.fetchall()
+            merged: dict[str, list[float | int]] = defaultdict(lambda: [0.0, 0])
+            for r in rows_a:
+                raw_l = r[0] or "(sem adquirente)"
+                if raw_l == "(sem adquirente)":
+                    disp = raw_l
+                else:
+                    disp = _normalize_acquirer(raw_l) or raw_l
+                t = float(r[1] or 0)
+                c = int(r[2] or 0)
+                merged[disp][0] = float(merged[disp][0]) + t
+                merged[disp][1] = int(merged[disp][1]) + c
+            out["by_adquirente"] = [
+                {"label": lab, "total": float(tot), "count": int(cnt)}
+                for lab, (tot, cnt) in sorted(merged.items(), key=lambda x: -float(x[1][0]))[:40]
+            ]
+            cur.execute(sql_n_acq, tuple(params_base))
+            n_facts_com_acquirer = int((cur.fetchone() or [0])[0] or 0)
+
+            # #region agent log
+            try:
+                import time as _time
+
+                _payload2 = {
+                    "sessionId": "d1495d",
+                    "hypothesisId": "H1",
+                    "location": "db.py:dashboard_metodo_adquirente_from_tx_facts_meta:exit",
+                    "message": "tx_facts_meta resultado",
+                    "data": {
+                        "n_metodo_rows": len(out["by_metodo"]),
+                        "n_adq_rows": len(out["by_adquirente"]),
+                        "n_facts_com_acquirer_no_periodo": n_facts_com_acquirer,
+                        "primeiros_adquirentes": [x.get("label") for x in (out["by_adquirente"] or [])[:5]],
+                    },
+                    "timestamp": int(_time.time() * 1000),
+                }
+                with open("/var/www/.cursor/debug-d1495d.log", "a", encoding="utf-8") as _df:
+                    _df.write(__import__("json").dumps(_payload2, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
+            # #endregion
+    except Exception:
+        return {"by_metodo": [], "by_adquirente": []}
+    return out
+
+
+def dashboard_metodo_adquirente_fallback_webhooks(
+    date_from: str,
+    date_to: str,
+    producer_emails: list[str] | None = None,
+) -> dict:
+    """
+    Quando ``applyfy_vendas`` não tem linhas no período, agrega método e adquirente a partir de
+    ``applyfy_tx_facts`` + último payload em ``applyfy_transactions`` (webhooks) por ``transaction_id``.
+    Mesma forma de linhas que ``dashboard_vendas_aggregates`` (label, total, count).
+    ``producer_emails``: None = todos os produtores (período global, alinhado ao ticket médio).
+    """
+    out: dict = {"by_metodo": [], "by_adquirente": []}
+    if not get_database_url():
+        return out
+    init_db()
+    extra = ""
+    params_base: list = [date_from[:10], date_to[:10]]
+    if producer_emails is not None:
+        norm = list({_normalize_producer_email(e) for e in producer_emails if e and _normalize_producer_email(e)})
+        if not norm:
+            return out
+        extra = " AND lower(trim(f.producer_email)) = ANY(%s) "
+        params_base.append(norm)
+
+    join_w = """
+        INNER JOIN (
+            SELECT DISTINCT ON (btrim(transaction_id))
+                btrim(transaction_id) AS tid,
+                payload
+            FROM applyfy_transactions
+            WHERE transaction_id IS NOT NULL AND btrim(COALESCE(transaction_id, '')) <> ''
+            ORDER BY btrim(transaction_id), received_at DESC
+        ) lw ON btrim(f.transaction_id) = lw.tid
+    """
+    sql_metodo = f"""
+        SELECT COALESCE(
+                 NULLIF(UPPER(TRIM(lw.payload->'transaction'->>'paymentMethod')), ''),
+                 NULLIF(UPPER(TRIM(lw.payload->'transaction'->>'payment_method')), ''),
+                 '(sem método)'
+               ),
+               COALESCE(SUM(f.vendas_net), 0),
+               COUNT(*)::int
+        FROM applyfy_tx_facts f
+        {join_w}
+        WHERE f.tx_day >= %s::date AND f.tx_day <= %s::date
+          AND COALESCE(f.vendas_net, 0) > 0
+          {extra}
+        GROUP BY 1
+        ORDER BY 2 DESC NULLS LAST
+        LIMIT 40;
+    """
+    sql_adq = f"""
+        SELECT COALESCE(
+                 NULLIF(TRIM(lw.payload#>>'{{transaction,acquirer}}'), ''),
+                 NULLIF(TRIM(lw.payload#>>'{{transaction,acquirerName}}'), ''),
+                 NULLIF(TRIM(lw.payload#>>'{{transaction,acquirer,name}}'), ''),
+                 NULLIF(TRIM(lw.payload->'transaction'->'acquirer'->>'name'), ''),
+                 NULLIF(TRIM(lw.payload#>>'{{transaction,gateway}}'), ''),
+                 '(sem adquirente)'
+               ),
+               COALESCE(SUM(f.vendas_net), 0),
+               COUNT(*)::int
+        FROM applyfy_tx_facts f
+        {join_w}
+        WHERE f.tx_day >= %s::date AND f.tx_day <= %s::date
+          AND COALESCE(f.vendas_net, 0) > 0
+          {extra}
+        GROUP BY 1
+        ORDER BY 2 DESC NULLS LAST
+        LIMIT 40;
+    """
+    try:
+        with cursor() as cur:
+            cur.execute(sql_metodo, tuple(params_base))
+            out["by_metodo"] = [
+                {"label": r[0] or "(sem método)", "total": float(r[1] or 0), "count": int(r[2] or 0)}
+                for r in cur.fetchall()
+            ]
+            cur.execute(sql_adq, tuple(params_base))
+            out["by_adquirente"] = [
+                {"label": r[0] or "(sem adquirente)", "total": float(r[1] or 0), "count": int(r[2] or 0)}
+                for r in cur.fetchall()
+            ]
+    except Exception:
+        return {"by_metodo": [], "by_adquirente": []}
+    return out
+
+
+def dashboard_vendas_cartao_por_parcelas(
+    date_from: str,
+    date_to: str,
+    allowed_producer_emails: list[str] | None = None,
+) -> list[dict]:
+    """
+    Soma valor_liquido_produtor por número de parcelas, apenas vendas em cartão
+    (método contém card/cartão/credito/débito — padrão típico da API Applyfy).
+    """
+    if not get_database_url():
+        return []
+    init_db()
+    extra_sql, extra_params = _dashboard_vendas_email_filter_sql(allowed_producer_emails)
+    params: list = [date_from[:10], date_to[:10]] + extra_params
+    # Filtro cartão (rótulos típicos da API / export)
+    card_sql = """
+        AND (
+            upper(trim(COALESCE(metodo_pagamento, ''))) LIKE '%CARD%'
+            OR upper(trim(COALESCE(metodo_pagamento, ''))) LIKE '%CARTAO%'
+            OR upper(trim(COALESCE(metodo_pagamento, ''))) LIKE '%CARTÃO%'
+            OR upper(trim(COALESCE(metodo_pagamento, ''))) LIKE '%CREDITO%'
+            OR upper(trim(COALESCE(metodo_pagamento, ''))) LIKE '%CRÉDITO%'
+            OR upper(trim(COALESCE(metodo_pagamento, ''))) LIKE '%DEBITO%'
+            OR upper(trim(COALESCE(metodo_pagamento, ''))) LIKE '%DÉBITO%'
+        )
+    """
+    sql = f"""
+        SELECT
+            CASE
+                WHEN parcelas IS NULL OR parcelas < 1 THEN 1
+                ELSE parcelas
+            END AS n_parcelas,
+            COALESCE(SUM(valor_liquido_produtor), 0),
+            COUNT(*)::int
+        FROM applyfy_vendas
+        {_dashboard_venda_periodo_where_sql()}
+          {extra_sql}
+          {card_sql}
+        GROUP BY 1
+        ORDER BY 1;
+    """
+    try:
+        with cursor() as cur:
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+    except Exception:
+        return []
+    out: list[dict] = []
+    for r in rows:
+        n = int(r[0] or 1)
+        if n < 1:
+            n = 1
+        val = float(r[1] or 0)
+        cnt = int(r[2] or 0)
+        out.append(
+            {
+                "label": f"{n}x",
+                "n_parcelas": n,
+                "valor": round(val, 2),
+                "transacoes": cnt,
+            }
+        )
+    return out
+
+
+def dashboard_erro_transacao_por_descricao(
+    date_from: str,
+    date_to: str,
+    allowed_producer_emails: list[str] | None = None,
+    limit: int = 25,
+) -> dict:
+    """
+    Contagem por texto de mensagem de erro / tentativa (applyfy_vendas_transaction_attempts.message),
+    com fallback para applyfy_vendas.tentativa_mensagem quando não houver linhas em tentativas.
+    Apenas linhas com mensagem não vazia.
+    """
+    empty = {"rows": [], "total": 0, "source": None}
+    if not get_database_url():
+        return empty
+    init_db()
+    lim = min(max(int(limit), 5), 50)
+    extra_sql, extra_params = _dashboard_vendas_email_filter_sql(allowed_producer_emails)
+    params_base = [date_from[:10], date_to[:10]] + extra_params
+
+    def _pct_rows(rows, total: int) -> list:
+        out: list[dict] = []
+        for lbl, cnt in rows:
+            c = int(cnt or 0)
+            lbl_s = (str(lbl) or "").strip() or "(sem descrição)"
+            if len(lbl_s) > 500:
+                lbl_s = lbl_s[:497] + "..."
+            out.append(
+                {
+                    "label": lbl_s,
+                    "count": c,
+                    "pct": round((c / total * 100.0) if total > 0 else 0.0, 2),
+                }
+            )
+        return out
+
+    vw = _dashboard_venda_periodo_where_sql("v")
+    # 1) Tentativas de pagamento (tabela de attempts)
+    sql_total_attempts = f"""
+        SELECT COUNT(*)::int
+        FROM applyfy_vendas_transaction_attempts a
+        INNER JOIN applyfy_vendas v ON v.transaction_id IS NOT NULL
+          AND trim(v.transaction_id) <> ''
+          AND trim(v.transaction_id) = trim(a.transaction_id)
+        {vw}
+          {extra_sql}
+          AND NULLIF(trim(a.message), '') IS NOT NULL;
+    """
+    sql_agg_attempts = f"""
+        SELECT COALESCE(NULLIF(trim(a.message), ''), '(sem descrição)'), COUNT(*)::int
+        FROM applyfy_vendas_transaction_attempts a
+        INNER JOIN applyfy_vendas v ON v.transaction_id IS NOT NULL
+          AND trim(v.transaction_id) <> ''
+          AND trim(v.transaction_id) = trim(a.transaction_id)
+        {vw}
+          {extra_sql}
+          AND NULLIF(trim(a.message), '') IS NOT NULL
+        GROUP BY 1
+        ORDER BY 2 DESC NULLS LAST
+        LIMIT %s;
+    """
+    try:
+        with cursor() as cur:
+            cur.execute(sql_total_attempts, tuple(params_base))
+            total = int((cur.fetchone() or [0])[0] or 0)
+            cur.execute(sql_agg_attempts, tuple(params_base + [lim]))
+            raw = cur.fetchall()
+        if raw and total > 0:
+            return {
+                "rows": _pct_rows(raw, total),
+                "total": total,
+                "source": "transaction_attempts",
+            }
+    except Exception:
+        total = 0
+        raw = []
+
+    # 2) Fallback: mensagem na própria linha de venda (última tentativa resumida)
+    sql_total_v = f"""
+        SELECT COUNT(*)::int
+        FROM applyfy_vendas v
+        {vw}
+          {extra_sql}
+          AND NULLIF(trim(v.tentativa_mensagem), '') IS NOT NULL;
+    """
+    sql_agg_v = f"""
+        SELECT COALESCE(NULLIF(trim(v.tentativa_mensagem), ''), '(sem descrição)'), COUNT(*)::int
+        FROM applyfy_vendas v
+        {vw}
+          {extra_sql}
+          AND NULLIF(trim(v.tentativa_mensagem), '') IS NOT NULL
+        GROUP BY 1
+        ORDER BY 2 DESC NULLS LAST
+        LIMIT %s;
+    """
+    try:
+        with cursor() as cur:
+            cur.execute(sql_total_v, tuple(params_base))
+            total = int((cur.fetchone() or [0])[0] or 0)
+            cur.execute(sql_agg_v, tuple(params_base + [lim]))
+            raw = cur.fetchall()
+        if not raw or total <= 0:
+            return empty
+        return {
+            "rows": _pct_rows(raw, total),
+            "total": total,
+            "source": "venda_tentativa_mensagem",
+        }
+    except Exception:
+        return empty
+
+
+def dashboard_vendas_por_vendedor(
+    date_from: str,
+    date_to: str,
+    allowed_producer_emails: list[str] | None = None,
+):
+    """
+    Soma valor_liquido_produtor por vendedor_nome (carteira), no período.
+    Produtores sem entrada em applyfy_producer_vendedor aparecem como '(sem vendedor)'.
+    """
+    if not get_database_url():
+        return []
+    init_db()
+    extra_sql, extra_params = _dashboard_vendas_email_filter_sql(allowed_producer_emails)
+    params = [date_from[:10], date_to[:10]] + extra_params
+    sql = f"""
+        SELECT COALESCE(NULLIF(trim(pv.vendedor_nome), ''), '(sem vendedor)'),
+               COALESCE(SUM(v.valor_liquido_produtor), 0),
+               COUNT(*)
+        FROM applyfy_vendas v
+        LEFT JOIN applyfy_producer_vendedor pv ON lower(trim(v.produtor_email)) = lower(trim(pv.producer_email))
+        {_dashboard_venda_periodo_where_sql("v")}
+          {extra_sql}
+        GROUP BY 1
+        ORDER BY 2 DESC NULLS LAST;
+    """
+    try:
+        with cursor() as cur:
+            cur.execute(sql, tuple(params))
+            rows = cur.fetchall()
+    except Exception:
+        return []
+    return [
+        {
+            "vendedor": r[0],
+            "valor_liquido": round(float(r[1] or 0), 2),
+            "count": int(r[2] or 0),
+        }
+        for r in rows
+    ]
 
 
 def get_sync_state(scope: str) -> dict:

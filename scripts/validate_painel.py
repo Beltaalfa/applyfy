@@ -26,8 +26,16 @@ def main() -> int:
         "/api/me",
         "/api/integracao-status",
         "/",
+        "/dashboard",
+        "/dashboard/",
+        "/api/dashboard?from=2020-01-01&to=2020-01-31",
         "/historico",
-        "/integracoes",
+        "/evolucao",
+        "/transacoes",
+        "/vendas",
+        "/produtores",
+        "/saldo",
+        "/taxas",
         "/permissoes",
         "/config-comercial",
         "/meta",
@@ -35,6 +43,7 @@ def main() -> int:
         "/comercial/",
         "/static/painel-shell.js",
         "/static/painel-theme.css",
+        "/static/table-utils.js",
         "/financeiro",
         "/api/ultimo-relatorio",
         "/api/comercial/carteira",
@@ -53,8 +62,11 @@ def main() -> int:
                 print(f"FALHA {path} -> HTTP {resp.status_code}")
                 return 1
         js = client.get("/static/painel-shell.js")
-        if js.status_code != 200 or b"/comercial" not in js.data or b"Comercial" not in js.data:
+        if js.status_code != 200 or b"/comercial" not in js.data or b"/dashboard" not in js.data:
             print("FALHA painel-shell.js incompleto ou inacessível em /static/")
+            return 1
+        if b"/transacoes" not in js.data or b"firstSortAsc" not in client.get("/static/table-utils.js").data:
+            print("FALHA table-utils ou menu incompleto")
             return 1
     print("OK")
     return 0

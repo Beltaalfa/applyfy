@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
+  <link rel="icon" href="/static/logo/Icone.png?v=2" type="image/png">
+  <link rel="apple-touch-icon" href="/static/logo/Icone.png?v=2">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Evolução por produtor | Applyfy</title>
@@ -11,11 +13,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/painel-theme.css">
+  <link rel="stylesheet" href="/static/painel-theme.css?v=gold7">
   <style>
     .evo-lead { color: var(--zinc-400); font-size: 0.92rem; max-width: 48rem; margin: 0 0 1rem; line-height: 1.55; }
     .table-wrap.flat .num { text-align: right; font-variant-numeric: tabular-nums; }
-    .evo-api-row { background: rgba(59, 130, 246, 0.08); font-weight: 600; }
+    .evo-api-row { background: rgba(212, 175, 55, 0.12); font-weight: 600; }
     .evo-muted { color: var(--zinc-500); font-size: 0.8rem; }
     .chart-container { height: min(420px, 55vh); position: relative; }
   </style>
@@ -23,7 +25,7 @@
 <body data-active="/evolucao">
   <div class="app-shell" id="app-shell">
     <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <img src="/static/logo/Icone.png?v=2" alt="" class="sidebar-toggle__icon" decoding="async" />
     </button>
     <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
     <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
@@ -34,14 +36,14 @@
         </div>
       </header>
       <main class="main-content">
-        <p class="evo-lead">As colunas <strong>Pendente</strong>, <strong>Retido</strong>, <strong>Disponível</strong>, <strong>Total sacado</strong>, <strong>Total vendas (API)</strong> e <strong>Chargeback (API)</strong> seguem o mesmo modelo da página <strong>Saldo</strong> (<code>balances</code> / <code>totals</code> em <code>GET …/gateway/admin/producers</code>). Na tabela, cada <strong>data</strong> mostra o relatório guardado no Postgres (job de export). A linha <strong>Snapshot API (agora)</strong> traz os seis valores actuais da API. Use o <strong>período</strong> para filtrar as linhas históricas. No gráfico, <strong>Total vendas (API)</strong> e <strong>Chargeback (API)</strong> são calculados <strong>directamente na API Admin</strong> (<code>GET …/transactions</code> por produtor e datas), sem usar cópia local.</p>
+        <p class="evo-lead">Acompanhe como os saldos e totais de cada produtor evoluem ao longo do tempo. A tabela junta o histórico guardado por data com uma linha «agora» com os valores actuais da Applyfy. Escolha o período, o produtor e a série no gráfico. Vendas e chargeback no gráfico vêm da consulta directa à Applyfy pelas datas escolhidas.</p>
 
         <div class="filtro" style="flex-direction:column;align-items:stretch;gap:0.75rem;">
           <div class="filtro-row" style="flex-wrap:wrap;">
             <label for="evDateFrom">Período — de:</label>
-            <input type="date" id="evDateFrom" title="Filtra linhas do histórico (Postgres)">
+            <input type="date" id="evDateFrom" title="Início do período para o histórico guardado">
             <label for="evDateTo">até:</label>
-            <input type="date" id="evDateTo">
+            <input type="date" id="evDateTo" title="Fim do período para o histórico guardado">
             <button type="button" class="btn btn-primary" id="btnEvAplicarPeriodo">Aplicar período</button>
           </div>
           <div class="filtro-row">
@@ -72,18 +74,21 @@
 
         <div class="card card-padded" id="cardTable" style="display: none;">
           <h2 class="content-h2">Tabela — relatório por data + snapshot API</h2>
-          <p class="evo-muted" style="margin:0 0 0.75rem;">Colunas API alinhadas a <code>balances.pending</code>, <code>fundLock</code>, <code>available</code>, <code>totals.withdrawn</code>, <code>totals.sold</code>, <code>totals.chargeback</code>.</p>
+          <p class="evo-muted" style="margin:0 0 0.75rem;">As colunas correspondem a pendente, retido, disponível, total sacado, vendas e chargebacks tal como na Applyfy.</p>
+          <div class="actions" style="margin-bottom:0.75rem;">
+            <button type="button" class="btn btn-primary" id="btnEvoXlsx">Exportar XLSX</button>
+          </div>
           <div class="table-wrap flat" style="overflow-x:auto;">
-            <table>
+            <table id="evoTable">
               <thead>
                 <tr>
-                  <th>Data</th>
-                  <th class="num">Pendente</th>
-                  <th class="num">Retido</th>
-                  <th class="num">Disponível</th>
-                  <th class="num">Total sacado</th>
-                  <th class="num">Total vendas (API)</th>
-                  <th class="num">Chargeback (API)</th>
+                  <th data-col="Data" data-type="data">Data <span class="sort-icon">↕</span></th>
+                  <th data-col="saldo_pendente" data-type="num" class="num">Pendente <span class="sort-icon">↕</span></th>
+                  <th data-col="saldo_retido" data-type="num" class="num">Retido <span class="sort-icon">↕</span></th>
+                  <th data-col="saldo_disponivel" data-type="num" class="num">Disponível <span class="sort-icon">↕</span></th>
+                  <th data-col="total_sacado" data-type="num" class="num">Total sacado <span class="sort-icon">↕</span></th>
+                  <th data-col="api_sold" data-type="num" class="num">Total vendas (API) <span class="sort-icon">↕</span></th>
+                  <th data-col="api_chargeback" data-type="num" class="num">Chargeback (API) <span class="sort-icon">↕</span></th>
                 </tr>
               </thead>
               <tbody id="evoTbody"></tbody>
@@ -100,7 +105,8 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js?v=15" defer></script>
+  <script src="/static/painel-shell.js?v=28" defer></script>
+  <script src="/static/table-utils.js?v=3"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script>
     document.body.classList.add('loaded');
@@ -108,6 +114,9 @@
     var chartInstance = null;
     var listaProdutores = [];
     var dadosEvolucaoAtuais = [];
+    var evoTableRows = [];
+    var evoSortCol = null;
+    var evoSortAsc = true;
     var apiSnapshotAtual = null;
     var seriesDiarioAtual = null;
     var seriesDiarioError = null;
@@ -232,8 +241,8 @@
           datasets: [{
             label: label,
             data: dataVals,
-            borderColor: colKey.indexOf('api_') === 0 ? '#a855f7' : '#3b82f6',
-            backgroundColor: colKey.indexOf('api_') === 0 ? 'rgba(168, 85, 247, 0.12)' : 'rgba(59, 130, 246, 0.12)',
+            borderColor: colKey.indexOf('api_') === 0 ? '#a855f7' : '#d4af37',
+            backgroundColor: colKey.indexOf('api_') === 0 ? 'rgba(168, 85, 247, 0.12)' : 'rgba(212, 175, 55, 0.12)',
             fill: true,
             tension: 0.2,
             spanGaps: true
@@ -262,39 +271,130 @@
         opt.style.display = show ? '' : 'none';
       });
     }
-    function renderTabela() {
-      var tb = document.getElementById('evoTbody');
-      var dados = dadosEvolucaoAtuais;
+    function buildEvoTableRows() {
+      evoTableRows = [];
+      dadosEvolucaoAtuais.forEach(function (d) {
+        var ra = d.run_at || '';
+        var t = ra ? new Date(ra).getTime() : 0;
+        evoTableRows.push({
+          _kind: 'hist',
+          Data: ra ? ra.slice(0, 10) : '–',
+          _sortData: t,
+          saldo_pendente: d.saldo_pendente,
+          saldo_retido: d.saldo_retido,
+          saldo_disponivel: d.saldo_disponivel,
+          total_sacado: d.total_sacado,
+          api_sold: null,
+          api_chargeback: null,
+        });
+      });
       var snap = apiSnapshotAtual;
-      var rows = [];
-      dados.forEach(function(d) {
-        var dt = d.run_at ? d.run_at.slice(0, 10) : '–';
-        rows.push(
-          '<tr><td>' + esc(dt) + '</td>' +
-          '<td class="num">' + esc(fmtBRL(d.saldo_pendente)) + '</td>' +
-          '<td class="num">' + esc(fmtBRL(d.saldo_retido)) + '</td>' +
-          '<td class="num">' + esc(fmtBRL(d.saldo_disponivel)) + '</td>' +
-          '<td class="num">' + esc(fmtBRL(d.total_sacado)) + '</td>' +
-          '<td class="num evo-muted">—</td><td class="num evo-muted">—</td></tr>'
+      if (snap) {
+        evoTableRows.push({
+          _kind: 'snap',
+          Data: 'Snapshot API (agora)',
+          _sortData: Number.MAX_SAFE_INTEGER - 1,
+          saldo_pendente: snap.pending,
+          saldo_retido: snap.fundLock,
+          saldo_disponivel: snap.available,
+          total_sacado: snap.withdrawn,
+          api_sold: snap.sold,
+          api_chargeback: snap.chargeback,
+        });
+      }
+    }
+    function evoSortRows() {
+      var col = evoSortCol;
+      var asc = evoSortAsc;
+      if (!col) return evoTableRows.slice();
+      var mult = asc ? 1 : -1;
+      return evoTableRows.slice().sort(function (a, b) {
+        if (col === 'Data') {
+          return mult * ((a._sortData || 0) - (b._sortData || 0));
+        }
+        var va = a[col];
+        var vb = b[col];
+        if (va == null && vb == null) return 0;
+        if (va == null) return mult * 1;
+        if (vb == null) return mult * -1;
+        va = Number(va) || 0;
+        vb = Number(vb) || 0;
+        return mult * (va - vb);
+      });
+    }
+    function renderTabela() {
+      buildEvoTableRows();
+      var tb = document.getElementById('evoTbody');
+      var snap = apiSnapshotAtual;
+      var dados = dadosEvolucaoAtuais;
+      var sorted = evoSortRows();
+      var rows = sorted.map(function (r) {
+        if (r._kind === 'hist') {
+          return (
+            '<tr><td>' + esc(r.Data) + '</td>' +
+            '<td class="num">' + esc(fmtBRL(r.saldo_pendente)) + '</td>' +
+            '<td class="num">' + esc(fmtBRL(r.saldo_retido)) + '</td>' +
+            '<td class="num">' + esc(fmtBRL(r.saldo_disponivel)) + '</td>' +
+            '<td class="num">' + esc(fmtBRL(r.total_sacado)) + '</td>' +
+            '<td class="num evo-muted">—</td><td class="num evo-muted">—</td></tr>'
+          );
+        }
+        return (
+          '<tr class="evo-api-row"><td>' + esc(r.Data) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(r.saldo_pendente)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(r.saldo_retido)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(r.saldo_disponivel)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(r.total_sacado)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(r.api_sold)) + '</td>' +
+          '<td class="num">' + esc(fmtBRL(r.api_chargeback)) + '</td></tr>'
         );
       });
-      if (snap) {
-        rows.push(
-          '<tr class="evo-api-row"><td>Snapshot API (agora)</td>' +
-          '<td class="num">' + esc(fmtBRL(snap.pending)) + '</td>' +
-          '<td class="num">' + esc(fmtBRL(snap.fundLock)) + '</td>' +
-          '<td class="num">' + esc(fmtBRL(snap.available)) + '</td>' +
-          '<td class="num">' + esc(fmtBRL(snap.withdrawn)) + '</td>' +
-          '<td class="num">' + esc(fmtBRL(snap.sold)) + '</td>' +
-          '<td class="num">' + esc(fmtBRL(snap.chargeback)) + '</td></tr>'
-        );
-      } else if (dados.length || document.getElementById('produtor').value) {
+      if (!snap && (dados.length || document.getElementById('produtor').value)) {
         rows.push(
           '<tr class="evo-api-row"><td colspan="7" class="evo-muted">Snapshot API indisponível (verifique chaves APPLYFY_* ou correspondência de e-mail na listagem de produtores).</td></tr>'
         );
       }
       tb.innerHTML = rows.join('') || '<tr><td colspan="7" class="empty">Sem linhas.</td></tr>';
+      document.querySelectorAll('#evoTable th').forEach(function (th) {
+        var dc = th.getAttribute('data-col');
+        th.classList.toggle('sorted', dc === evoSortCol);
+        var icon = th.querySelector('.sort-icon');
+        if (icon) icon.textContent = dc === evoSortCol ? (evoSortAsc ? '↑' : '↓') : '↕';
+      });
     }
+    document.getElementById('evoTable').querySelector('thead').addEventListener('click', function (e) {
+      var th = e.target.closest('th[data-col]');
+      if (!th) return;
+      var col = th.getAttribute('data-col');
+      if (evoSortCol === col) evoSortAsc = !evoSortAsc;
+      else {
+        evoSortCol = col;
+        evoSortAsc = ApplyfyTable.firstSortAsc(th.getAttribute("data-type") || "num");
+      }
+      renderTabela();
+    });
+    function exportEvoVista() {
+      buildEvoTableRows();
+      var sorted = evoSortRows();
+      var headers = ['Data', 'Pendente', 'Retido', 'Disponível', 'Total sacado', 'Total vendas (API)', 'Chargeback (API)'];
+      var rows = sorted.map(function (r) {
+        return [
+          r.Data,
+          r.saldo_pendente != null ? Number(r.saldo_pendente) : '',
+          r.saldo_retido != null ? Number(r.saldo_retido) : '',
+          r.saldo_disponivel != null ? Number(r.saldo_disponivel) : '',
+          r.total_sacado != null ? Number(r.total_sacado) : '',
+          r.api_sold != null && r.api_sold !== '' ? Number(r.api_sold) : '',
+          r.api_chargeback != null && r.api_chargeback !== '' ? Number(r.api_chargeback) : '',
+        ];
+      });
+      return { headers: headers, rows: rows };
+    }
+    document.getElementById('btnEvoXlsx').addEventListener('click', function () {
+      var o = exportEvoVista();
+      if (!o || !o.rows.length) return;
+      ApplyfyTable.exportXLSX(o.headers, o.rows, 'evolucao_vista.xlsx', 'Evolução');
+    });
     function defaultPeriodIfEmpty() {
       var to = document.getElementById('evDateTo');
       var from = document.getElementById('evDateFrom');
@@ -350,6 +450,8 @@
           }
           msg.textContent = extra ? extra.replace(/^\s+/, '') : '';
           document.getElementById('empty').style.display = 'none';
+          evoSortCol = null;
+          evoSortAsc = true;
           document.getElementById('cardTable').style.display = 'block';
           var mostrarChart = dadosEvolucaoAtuais.length || apiSnapshotAtual || (seriesDiarioAtual && seriesDiarioAtual.length);
           document.getElementById('cardChart').style.display = mostrarChart ? 'block' : 'none';

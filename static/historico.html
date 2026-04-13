@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#000000">
+  <link rel="icon" href="/static/logo/Icone.png?v=2" type="image/png">
+  <link rel="apple-touch-icon" href="/static/logo/Icone.png?v=2">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Histórico por data | Applyfy</title>
@@ -11,12 +13,12 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/painel-theme.css">
+  <link rel="stylesheet" href="/static/painel-theme.css?v=gold7">
 </head>
 <body data-active="/historico">
   <div class="app-shell" id="app-shell">
     <button type="button" class="sidebar-toggle" id="sidebar-toggle" aria-label="Abrir menu">
-      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <img src="/static/logo/Icone.png?v=2" alt="" class="sidebar-toggle__icon" decoding="async" />
     </button>
     <button type="button" class="sidebar-overlay" id="sidebar-overlay" hidden aria-label="Fechar menu"></button>
     <aside class="sidebar" id="painel-sidebar" aria-label="Navegação"></aside>
@@ -27,6 +29,7 @@
         </div>
       </header>
       <main class="main-content">
+        <p class="text-muted" style="margin:0 0 1rem;line-height:1.5;max-width:40rem;">Consulte os saldos guardados em datas anteriores (relatórios já exportados). Escolha a data e exporte se precisar.</p>
         <div class="filtro">
           <label for="data">Data do relatório:</label>
           <select id="data">
@@ -58,7 +61,8 @@
       </main>
     </div>
   </div>
-  <script src="/static/painel-shell.js?v=6" defer></script>
+  <script src="/static/painel-shell.js?v=28" defer></script>
+  <script src="/static/table-utils.js?v=3"></script>
   <script>
     var cols = ['Nome','Email','Saldo pendente','Saldo retido','Saldo disponível','Total sacado','Vendas líquidas','Indicação','Outros'];
     var dadosAtuais = [];
@@ -79,7 +83,7 @@
       tbody.innerHTML = rows.length ? rows.map(rowToHtml).join('') : '<tr><td colspan="9" class="empty">Nenhum dado para esta data.</td></tr>';
     }
     function sortData(col, type) {
-      if (sortCol === col) sortAsc = !sortAsc; else { sortCol = col; sortAsc = true; }
+      if (sortCol === col) sortAsc = !sortAsc; else { sortCol = col; sortAsc = ApplyfyTable.firstSortAsc(type); }
       var mult = sortAsc ? 1 : -1;
       var sorted = dadosAtuais.slice().sort(function(a, b) {
         var va = a[col], vb = b[col];
@@ -93,6 +97,7 @@
         var icon = th.querySelector('.sort-icon');
         if (icon) icon.textContent = th.getAttribute('data-col') === col ? (sortAsc ? '↑' : '↓') : '↕';
       });
+      dadosAtuais = sorted;
       renderTable(sorted);
     }
     document.querySelector('thead').addEventListener('click', function(e) {
@@ -104,7 +109,7 @@
       var msg = document.getElementById('msgHistorico');
       if (!datas || datas.length === 0) {
         sel.innerHTML = '<option value="">Nenhuma data</option>';
-        if (msg) msg.textContent = 'O histórico vem do Postgres (DATABASE_URL no .env). Confira o .env e execute o job pelo menos uma vez. Se o job já rodou com sucesso, reinicie o painel: sudo systemctl restart applyfy-painel';
+        if (msg) msg.textContent = 'Ainda não há datas guardadas. É preciso base de dados configurada e o job de exportação de saldos a correr pelo menos uma vez. Se já correu, reinicie o serviço do painel no servidor.';
       } else {
         if (msg) msg.textContent = '';
         sel.innerHTML = '<option value="">Selecione uma data</option>' + (datas.map(function(d) {
@@ -114,7 +119,13 @@
       sel.addEventListener('change', function() {
         var runAt = sel.value;
         var btnXlsx = document.getElementById('btnExportarXlsx');
-        if (!runAt) { dadosAtuais = []; renderTable([]); btnXlsx.classList.add('disabled'); btnXlsx.href = '#'; return; }
+        if (!runAt) {
+          dadosAtuais = [];
+          renderTable([]);
+          btnXlsx.classList.add('disabled');
+          btnXlsx.href = '#';
+          return;
+        }
         btnXlsx.classList.remove('disabled');
         btnXlsx.href = '/api/exportar?formato=xlsx&run_at=' + encodeURIComponent(runAt);
         fetch('/api/relatorio?run_at=' + encodeURIComponent(runAt))
